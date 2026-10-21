@@ -3,6 +3,8 @@ const cors = require("cors")
 const githubRoutes = require("./routes/githubRoutes")
 const cookieParser = require("cookie-parser")
 const { frontendUrl } = require("./config/auth")
+const projectRoutes = require("./routes/projectRoutes")
+
 
 const app = express()
 
@@ -13,8 +15,7 @@ app.use(
   })
 )
 
-app.disable("x-powered-by")
-app.use(express.json({ limit: "16kb" }))
+app.use(express.json())
 app.use(cookieParser())
 
 app.use("/api", (req, res, next) => {
@@ -24,6 +25,8 @@ app.use("/api", (req, res, next) => {
 })
 
 app.use("/api/github", githubRoutes)
+
+app.use("/api/projects", projectRoutes)
 
 app.get("/api/health", (req, res) => {
   res.json({

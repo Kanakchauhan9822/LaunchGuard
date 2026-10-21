@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { githubLoginUrl, githubRequest } from './services/github'
+import Projects from './components/Projects'
 import './App.css'
 
 const callbackMessages = {
@@ -166,6 +167,12 @@ function App() {
             </form>
           )}
           {selectedRepository && <p>Selected repository: <strong>{selectedRepository.fullName}</strong></p>}
+          <Projects
+            key={user.githubId}
+            selectedRepository={selectedRepository}
+            disabled={busy || reconnect}
+            onSavingChange={setBusy}
+          />
           <p>Repository scanning will be added in a later feature.</p>
         </section>
       )}
