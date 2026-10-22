@@ -71,7 +71,7 @@ async function getProfile(token) {
   return data
 }
 
-async function getRepositories(userId, sessionId) {
+async function getAuthenticatedClient(userId, sessionId) {
   const user = await User.findOne({
     _id: userId,
     sessionId
@@ -92,8 +92,13 @@ async function getRepositories(userId, sessionId) {
     )
   }
 
+  return createClient(decryptToken(user.githubToken))
+}
+
+async function getRepositories(userId, sessionId) {
+  const client = await getAuthenticatedClient(userId, sessionId)
+
   try {
-    const client = await createClient(decryptToken(user.githubToken))
     const installations = await client.paginate("GET /user/installations", {
       per_page: 100
     })
@@ -149,4 +154,74 @@ async function getRepositories(userId, sessionId) {
   }
 }
 
-module.exports = { exchangeCode, getProfile, getRepositories, githubError }
+async function getLatestCommit(userId, sessionId, project) {
+  const repositories = await getRepositories(userId, sessionId)
+
+  const repository = repositories.find(
+    repository =>
+      repository.id === project.repositoryId &&
+      repository.installationId === project.installationId
+  )
+
+  if (!repository) {
+    throw githubError(403, "You no longer have access to this repository")
+  }
+
+  const client = await getAuthenticatedClient(userId, sessionId)
+  const [owner, repo] = repository.fullName.split("/")
+
+  try {
+    const { data } = await client.rest.repos.getCommit({
+      owner,
+      repo,
+      ref: repository.defaultBranch
+    })
+
+    return {
+      commitSha: data.sha,
+      branch: repository.defaultBranch
+    }
+  } catch (error) {
+    if (error.status === 401) {
+      throw githubError(
+        409,
+        "GitHub authorization expired. Reconnect GitHub",
+        "GITHUB_RECONNECT"
+      )
+    }
+
+    if (error.status === 404) {
+      throw githubError(
+        404,
+        "The repository or its default branch is no longer accessible"
+      )
+    }
+
+    if (error.status === 409) {
+      throw githubError(
+        409,
+        "GitHub could not resolve a commit. The repository may be empty"
+      )
+    }
+
+    if (error.status === 403 || error.status === 429) {
+      throw githubError(
+        503,
+        "GitHub denied access or temporarily limited requests. Please try again"
+      )
+    }
+
+    throw githubError(
+      502,
+      "Could not retrieve the latest commit from GitHub"
+    )
+  }
+}
+
+module.exports = {
+  exchangeCode,
+  getProfile,
+  getRepositories,
+  getLatestCommit,
+  githubError
+}

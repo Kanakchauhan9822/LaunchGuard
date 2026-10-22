@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiRequest } from '../services/api'
 import { githubLoginUrl } from '../services/github'
+import ReviewControls from './ReviewControls'
 
 function ProjectForm({ repository, disabled, onCreated, onSavingChange }) {
   const [description, setDescription] = useState('')
@@ -177,6 +178,10 @@ function Projects({ selectedRepository, disabled, onSavingChange }) {
           <li key={project._id}>
             <h3>{project.repositoryName}</h3>
             <p>{project.description}</p>
+            <ReviewControls
+              projectId={project._id}
+              disabled={disabled || loading || signedOut}
+            />
           </li>
         ))}
       </ul>

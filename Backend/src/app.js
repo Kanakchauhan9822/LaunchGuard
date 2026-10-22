@@ -4,7 +4,7 @@ const githubRoutes = require("./routes/githubRoutes")
 const cookieParser = require("cookie-parser")
 const { frontendUrl } = require("./config/auth")
 const projectRoutes = require("./routes/projectRoutes")
-
+const reviewRoutes = require("./routes/reviewRoutes")
 
 const app = express()
 
@@ -27,6 +27,8 @@ app.use("/api", (req, res, next) => {
 app.use("/api/github", githubRoutes)
 
 app.use("/api/projects", projectRoutes)
+
+app.use("/api/reviews", reviewRoutes)
 
 app.get("/api/health", (req, res) => {
   res.json({
