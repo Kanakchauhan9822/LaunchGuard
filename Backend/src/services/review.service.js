@@ -1,5 +1,6 @@
 const Review = require("../models/review.model")
 const { reviewQueue, withReviewQueue } = require("../queues/review.queue")
+const { reviewProcessing } = require("../config/review")
 
 async function enqueueReview(reviewId) {
   const id = reviewId.toString()
@@ -43,7 +44,11 @@ async function recoverPendingReviews(cursor = null, shouldStop = () => false) {
   const cutoff = new Date(Date.now() - 30000)
 
   const filter = {
-    status: { $in: ["pending", "queued"] },
+    $or: [
+      { status: { $in: ["pending", "queued"] } },
+      { status: "running", processingExpiresAt: { $lte: new Date() } },
+      { status: "running", processingExpiresAt: null }
+    ],
     updatedAt: {
       $lte: cutoff
     }
@@ -54,7 +59,7 @@ async function recoverPendingReviews(cursor = null, shouldStop = () => false) {
   }
 
   const reviews = await Review.find(filter)
-    .select("_id status")
+    .select("_id status updatedAt +processingAttempts")
     .sort({ _id: 1 })
     .limit(20)
     .lean()
@@ -66,8 +71,39 @@ async function recoverPendingReviews(cursor = null, shouldStop = () => false) {
 
     try {
       const job = await withReviewQueue(() => reviewQueue.getJob(`review-${review._id}`))
+      const jobState = job
+        ? await withReviewQueue(() => job.getState())
+        : "missing"
 
-      if (!job || review.status === "pending") {
+      const attemptsExhausted = review.processingAttempts >= reviewProcessing.maxAttempts
+      const abandoned = (
+        jobState === "failed" ||
+        jobState === "completed" ||
+        (jobState === "missing" && review.status === "running") ||
+        (jobState !== "active" && attemptsExhausted)
+      )
+
+      if (abandoned) {
+        await Review.updateOne(
+          {
+            _id: review._id,
+            status: review.status,
+            updatedAt: review.updatedAt
+          },
+          {
+            $set: {
+              status: "failed",
+              processingToken: null,
+              processingExpiresAt: null,
+              failure: {
+                code: "REVIEW_INTERRUPTED",
+                message: "Review processing stopped before saving a result. Please request a new review."
+              }
+            }
+          },
+          { runValidators: true }
+        )
+      } else if (!job || review.status === "pending") {
         await enqueueReview(review._id)
       }
 

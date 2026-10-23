@@ -1,12 +1,13 @@
 const { Queue } = require("bullmq")
 const { createRedisConnection } = require("../config/redis")
+const { reviewProcessing } = require("../config/review")
 
 const connection = createRedisConnection()
 
 const reviewQueue = new Queue("reviews", {
   connection,
   defaultJobOptions: {
-    attempts: 3,
+    attempts: reviewProcessing.maxAttempts,
     backoff: {
       type: "exponential",
       delay: 5000
