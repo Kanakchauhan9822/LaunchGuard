@@ -234,6 +234,9 @@ function ReviewControls({ projectId, disabled }) {
               {" — "}{review.status}
             </p>
             <p>Commit: <code>{review.commitSha}</code></p>
+            {review.stage && <p>Stage: {review.stage}</p>}
+            {review.resultMessage && <p>{review.resultMessage}</p>}
+            {review.failure && <p>{review.failure.message}</p>}
             <p>Requested: {new Date(review.createdAt).toLocaleString()}</p>
           </li>
         ))}

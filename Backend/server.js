@@ -11,6 +11,7 @@ const PORT = Number(process.env.PORT || 3000)
 let server
 let stopReviewRecovery = async () => {}
 let closeReviewQueue = async () => {}
+let stopReviewWorker = async () => {}
 let shuttingDown = false
 
 async function shutdown(exitCode = 0) {
@@ -44,7 +45,7 @@ async function shutdown(exitCode = 0) {
       })
     })
 
-    await Promise.all([httpClosed, stopReviewRecovery()])
+    await Promise.all([httpClosed, stopReviewRecovery(), stopReviewWorker()])
     await closeReviewQueue()
     await mongoose.disconnect()
     clearTimeout(deadline)
@@ -92,6 +93,9 @@ async function startServer() {
       void shutdown(1)
     })
 
+    stage = "review worker"
+    const { startReviewWorker } = require("./src/workers/review.worker")
+    stopReviewWorker = startReviewWorker()
     stopReviewRecovery = startReviewRecovery()
     process.on("SIGINT", () => void shutdown())
     process.on("SIGTERM", () => void shutdown())

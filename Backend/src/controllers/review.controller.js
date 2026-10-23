@@ -190,7 +190,7 @@ async function listReviews(req, res, next) {
     }
 
     const reviews = await Review.find(filter)
-      .select("-__v")
+      .select("-__v -repositoryAnalysis -coverage")
       .sort({ _id: -1 })
       .limit(21)
       .lean()
