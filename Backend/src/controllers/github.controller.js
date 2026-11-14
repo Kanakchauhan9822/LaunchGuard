@@ -106,7 +106,7 @@ async function githubCallback(req, res) {
       },
       {
         upsert: true,
-        new: true,
+        returnDocument: "after",
         runValidators: true
       }
     )

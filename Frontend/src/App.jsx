@@ -173,7 +173,6 @@ function App() {
             disabled={busy || reconnect}
             onSavingChange={setBusy}
           />
-          <p>Repository scanning will be added in a later feature.</p>
         </section>
       )}
     </main>

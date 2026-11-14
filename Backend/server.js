@@ -6,6 +6,7 @@ const { validateAuthConfig } = require("./src/config/auth")
 const User = require("./src/models/user.model")
 const Project = require("./src/models/project.model")
 const Review = require("./src/models/review.model")
+const Finding = require("./src/models/finding.model")
 
 const PORT = Number(process.env.PORT || 3000)
 let server
@@ -78,6 +79,7 @@ async function startServer() {
     await User.init()
     await Project.init()
     await Review.init()
+    await Finding.init()
 
     stage = "HTTP listener"
     await new Promise((resolve, reject) => {

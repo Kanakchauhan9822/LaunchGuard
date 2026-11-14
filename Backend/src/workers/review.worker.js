@@ -2,9 +2,21 @@ const mongoose = require("mongoose")
 const { randomUUID } = require("node:crypto")
 const { Worker, UnrecoverableError } = require("bullmq")
 const Review = require("../models/review.model")
+const Finding = require("../models/finding.model")
 const { createRedisConnection } = require("../config/redis")
 const { reviewProcessing } = require("../config/review")
 const { getReviewSource } = require("../services/repository.service")
+const { scanWithGitleaks } = require("../services/gitleaks.service")
+const { scanWithOsv } = require("../services/osvScanner.service")
+const { scanWithSemgrep } = require("../services/semgrep.service")
+const { scanWithEslint } = require("../services/eslint.service")
+
+const scanners = [
+  { tool: "gitleaks", stage: "scanning-secrets", scan: scanWithGitleaks },
+  { tool: "osv-scanner", stage: "scanning-dependencies", scan: scanWithOsv },
+  { tool: "semgrep", stage: "scanning-code", scan: scanWithSemgrep },
+  { tool: "eslint", stage: "scanning-quality", scan: scanWithEslint }
+]
 
 function startReviewWorker() {
   const connection = createRedisConnection({ forWorker: true })
@@ -87,7 +99,7 @@ async function processReview(job, shutdownSignal) {
         },
         $inc: { processingAttempts: 1 }
       },
-      { new: true, runValidators: true }
+      { returnDocument: "after", runValidators: true }
     ).select("+processingAttempts").lean()
 
     if (!review) {
@@ -156,25 +168,78 @@ async function processReview(job, shutdownSignal) {
       throw new UnrecoverableError("Repository summary exceeds storage limits")
     }
 
-    const result = await Review.updateOne(
-      ownedReviewFilter(),
-      {
-        $set: {
-          ...summary,
-          status: "partial",
-          stage: "repository-ready",
-          resultMessage: "Repository preparation finished. Security and quality scanners have not run yet.",
-          failure: null,
-          processingToken: null,
-          processingExpiresAt: null
-        }
-      },
-      { runValidators: true }
-    )
+    const findings = []
+    const scannerOutcomes = []
 
-    if (!result.matchedCount) {
-      throw new Error("Review processing claim expired")
+    for (const scanner of scanners) {
+      await updateStage(scanner.stage)
+      const result = await scanner.scan(source.files, signal)
+      signal.throwIfAborted()
+      findings.push(...result.findings)
+      scannerOutcomes.push(result.outcome)
     }
+
+    const status = scannerOutcomes.every(outcome => outcome.status === "completed")
+      ? "completed"
+      : "partial"
+
+    await Review.db.transaction(async session => {
+      signal.throwIfAborted()
+      const claim = await Review.updateOne(
+        ownedReviewFilter(),
+        { $set: { stage: "scans-finished" } },
+        { session, runValidators: true }
+      )
+
+      if (!claim.matchedCount) {
+        throw new Error("Review processing claim expired")
+      }
+
+      await Finding.deleteMany(
+        {
+          review: reviewId,
+          tool: {
+            $in: scanners.map(scanner => scanner.tool)
+          }
+        },
+        { session }
+      )
+
+      if (findings.length > 0) {
+        await Finding.insertMany(
+          findings.map(finding => ({
+            ...finding,
+            review: reviewId
+          })),
+          { session }
+        )
+      }
+
+      signal.throwIfAborted()
+      const result = await Review.updateOne(
+        ownedReviewFilter(),
+        {
+          $set: {
+            ...summary,
+            status,
+            stage: "scans-finished",
+            scannerOutcomes,
+            resultMessage: status === "completed"
+              ? "All configured scanners completed. Review the findings and coverage details."
+              : "Some configured scanners failed or were skipped. Check individual scanner outcomes for details.",
+            failure: null,
+            processingToken: null,
+            processingExpiresAt: null
+          }
+        },
+        { session, runValidators: true }
+      )
+
+      if (!result.matchedCount) {
+        throw new Error("Review processing claim expired")
+      }
+      signal.throwIfAborted()
+    })
   } catch (error) {
     const permanent = (
       error instanceof UnrecoverableError ||

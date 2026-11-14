@@ -35,7 +35,7 @@ async function enqueueReview(reviewId) {
       }
     },
     {
-      new: true
+      returnDocument: "after"
     }
   )
 }
