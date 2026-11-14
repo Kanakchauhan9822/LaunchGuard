@@ -237,6 +237,44 @@ const failureSchema = new mongoose.Schema(
   { _id: false }
 )
 
+const scannerOutcomeSchema = new mongoose.Schema(
+  {
+    tool: {
+      type: String,
+      enum: ["gitleaks", "osv-scanner", "semgrep", "eslint"],
+      required: true
+    },
+    status: {
+      type: String,
+      enum: ["pending", "running", "completed", "failed", "skipped"],
+      default: "pending",
+      required: true
+    },
+    findingCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+      validate: Number.isSafeInteger
+    },
+    reason: {
+      type: String,
+      default: null,
+      maxlength: 500
+    },
+    startedAt: {
+      type: Date,
+      default: null
+    },
+    finishedAt: {
+      type: Date,
+      default: null
+    }
+  },
+  {
+    _id: false
+  }
+)
+
 const reviewSchema = new mongoose.Schema(
   {
     owner: {
@@ -291,6 +329,10 @@ const reviewSchema = new mongoose.Schema(
       type: repositoryAnalysisSchema,
       default: null
     },
+    scannerOutcomes: {
+      type: [scannerOutcomeSchema],
+      default: []
+    },
     coverage: {
       type: coverageSchema,
       default: null
@@ -306,6 +348,11 @@ const reviewSchema = new mongoose.Schema(
         "checking-access",
         "fetching-files",
         "inspecting-repository",
+        "scanning-secrets",
+        "scanning-dependencies",
+        "scanning-code",
+        "scanning-quality",
+        "scans-finished",
         "repository-ready"
       ],
       default: "waiting",

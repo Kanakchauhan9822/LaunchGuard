@@ -72,17 +72,6 @@ async function prepareReviewRepository(review, signal) {
     }
 }
 
-async function getReviewFileTree(review) {
-    const prepared = await prepareReviewRepository(review)
-
-    return {
-        repository: prepared.repository,
-        commitSha: prepared.commitSha,
-        tree: prepared.tree,
-        selection: prepared.selection
-    }
-}
-
 async function getReviewSource(review, signal, onStage = async () => {}) {
     if (signal?.aborted) {
         throw githubError(504, "Repository retrieval was cancelled")
@@ -117,7 +106,5 @@ async function getReviewSource(review, signal, onStage = async () => {}) {
 
 
 module.exports = {
-    getReviewRepository,
-    getReviewFileTree,
     getReviewSource
 }

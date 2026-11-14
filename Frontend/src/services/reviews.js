@@ -30,3 +30,18 @@ export function listReviews(projectId, cursor, signal) {
     signal
   })
 }
+
+export function listFindings(reviewId, cursor, signal) {
+  const params = new URLSearchParams()
+
+  if (cursor) {
+    params.set("cursor", cursor)
+  }
+
+  const query = params.size > 0 ? `?${params.toString()}` : ""
+
+  return apiRequest(
+    `/reviews/${encodeURIComponent(reviewId)}/findings${query}`,
+    { signal }
+  )
+}

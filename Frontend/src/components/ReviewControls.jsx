@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createReview, getReview, listReviews } from "../services/reviews"
 import { githubLoginUrl } from "../services/github"
+import ReviewFindings from "./ReviewFindings"
 
 const activeStatuses = new Set(["pending", "queued", "running"])
 
@@ -233,11 +234,33 @@ function ReviewControls({ projectId, disabled }) {
               {review.mode === "entire-project" ? "Entire project" : "Latest changes"}
               {" — "}{review.status}
             </p>
+
             <p>Commit: <code>{review.commitSha}</code></p>
             {review.stage && <p>Stage: {review.stage}</p>}
             {review.resultMessage && <p>{review.resultMessage}</p>}
             {review.failure && <p>{review.failure.message}</p>}
             <p>Requested: {new Date(review.createdAt).toLocaleString()}</p>
+
+            {review.scannerOutcomes?.length > 0 && (
+              <section aria-label="Scanner outcomes">
+                <h4>Scanner results</h4>
+                <ul>
+                  {review.scannerOutcomes.map(outcome => (
+                    <li key={outcome.tool}>
+                      <p>
+                        {outcome.tool} — {outcome.status}
+                        {" · "}{outcome.findingCount} findings
+                      </p>
+                      {outcome.reason && <p>{outcome.reason}</p>}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {["partial", "completed", "failed"].includes(review.status) && (
+              <ReviewFindings key={review._id} reviewId={review._id} />
+            )}
           </li>
         ))}
       </ul>

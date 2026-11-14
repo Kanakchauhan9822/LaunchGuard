@@ -1,6 +1,7 @@
 const mongoose = require("mongoose")
 const Project = require("../models/project.model")
 const Review = require("../models/review.model")
+const Finding = require("../models/finding.model")
 const { getLatestCommit } = require("../services/github.service")
 const { enqueueReview } = require("../services/review.service")
 
@@ -208,8 +209,71 @@ async function listReviews(req, res, next) {
 }
 
 
+async function listFindings(req, res, next) {
+  const { reviewId } = req.params
+  const { cursor } = req.query
+
+  if (!mongoose.isObjectIdOrHexString(reviewId)) {
+    return res.status(400).json({
+      message: "Please provide a valid review ID"
+    })
+  }
+
+  if (
+    cursor !== undefined &&
+    (
+      typeof cursor !== "string" ||
+      !mongoose.isObjectIdOrHexString(cursor)
+    )
+  ) {
+    return res.status(400).json({
+      message: "Please provide a valid cursor"
+    })
+  }
+
+  try {
+    const review = await Review.exists({
+      _id: reviewId,
+      owner: req.user._id
+    })
+
+    if (!review) {
+      return res.status(404).json({
+        message: "Review not found"
+      })
+    }
+
+    const filter = {
+      review: reviewId
+    }
+
+    if (cursor) {
+      filter._id = {
+        $lt: cursor
+      }
+    }
+
+    const findings = await Finding.find(filter)
+      .select("-__v -fingerprint -review")
+      .sort({ _id: -1 })
+      .limit(21)
+      .lean()
+
+    const hasMore = findings.length > 20
+    const page = findings.slice(0, 20)
+
+    return res.status(200).json({
+      findings: page,
+      nextCursor: hasMore ? page[page.length - 1]._id.toString() : null
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 module.exports = {
   createReview,
   getReview,
-  listReviews
+  listReviews,
+  listFindings
 }
