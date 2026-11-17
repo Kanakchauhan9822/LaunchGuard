@@ -69,3 +69,23 @@ export function requestImprovements(reviewId, signal) {
     signal
   })
 }
+
+export function getManualTests(reviewId, signal) {
+  return apiRequest(`/reviews/${encodeURIComponent(reviewId)}/manual-tests`, {
+    signal
+  })
+}
+
+export function requestManualTests(reviewId, signal) {
+  return apiRequest(`/reviews/${encodeURIComponent(reviewId)}/manual-tests`, {
+    method: "POST",
+    signal
+  })
+}
+
+export function markManualTestChecked(reviewId, testId, signal) {
+  return apiRequest(`/reviews/${encodeURIComponent(reviewId)}/manual-tests/${encodeURIComponent(testId)}`, {
+    method: "PATCH",
+    signal
+  })
+}

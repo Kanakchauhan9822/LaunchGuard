@@ -125,7 +125,10 @@ async function getFindingExplanation(req, res, next) {
       explainedAt: saved.explainedAt
     })
   } catch (error) {
-    if (!explanationToken) {
+    if (
+      !explanationToken ||
+      ["AI_HIGH_DEMAND", "AI_RATE_LIMIT"].includes(error.code)
+    ) {
       return next(error)
     }
 

@@ -14,6 +14,7 @@ const { scanWithEslint } = require("../services/eslint.service")
 const { reviewJobs } = require("../services/review.service")
 const { selectImprovementFiles } = require("../services/improvementContext.service")
 const { generateImprovements } = require("../services/improvement.service")
+const { generateManualTests } = require("../services/manualTest.service")
 const { aiConfig } = require("../config/ai")
 
 const scanners = [
@@ -59,11 +60,11 @@ function startReviewWorker() {
 
 async function processReview(job, shutdownSignal) {
   const reviewId = job.data?.reviewId
-  const kind = job.name === reviewJobs.improvement.name ? "improvement" : "review"
+  const kind = Object.keys(reviewJobs).find(kind => reviewJobs[kind].name === job.name)
   const fields = reviewJobs[kind]
 
   if (
-    job.name !== fields.name ||
+    !fields ||
     typeof reviewId !== "string" ||
     !mongoose.isObjectIdOrHexString(reviewId) ||
     job.id !== `${fields.prefix}-${reviewId}`
@@ -100,8 +101,8 @@ async function processReview(job, shutdownSignal) {
           [fields.status]: "running",
           [fields.token]: token,
           [fields.expires]: new Date(Date.now() + reviewProcessing.leaseMs),
-          ...(kind === "improvement" ? {
-            improvementMessage: null
+          ...(kind !== "review" ? {
+            [kind === "manualTest" ? "manualTestMessage" : "improvementMessage"]: null
           } : {
             stage: "checking-access",
             failure: null,
@@ -111,7 +112,7 @@ async function processReview(job, shutdownSignal) {
         $inc: { [fields.attempts]: 1 }
       },
       { returnDocument: "after", runValidators: true }
-    ).select(`+${fields.attempts}`).lean()
+    ).select(`+${fields.attempts} +manualTestDescription`).lean()
 
     if (!review) {
       const existing = await Review.findById(reviewId).select(fields.status).lean()
@@ -143,7 +144,7 @@ async function processReview(job, shutdownSignal) {
   async function updateStage(stage) {
     signal.throwIfAborted()
 
-    if (kind === "improvement") {
+    if (kind !== "review") {
       return
     }
 
@@ -167,6 +168,35 @@ async function processReview(job, shutdownSignal) {
 
     const source = await getReviewSource(review, signal, updateStage)
     signal.throwIfAborted()
+
+    if (kind === "manualTest") {
+      const files = await selectImprovementFiles(source.files, signal)
+      const manualTests = await generateManualTests(files, review.manualTestDescription, signal)
+      signal.throwIfAborted()
+
+      const result = await Review.updateOne(
+        ownedReviewFilter(),
+        {
+          $set: {
+            manualTests,
+            manualTestFiles: files.map(file => file.path),
+            manualTestStatus: "completed",
+            manualTestMessage: files.length === 0
+              ? "No source files were available within the size and secret-check limits. No manual checks were generated."
+              : null,
+            manualTestToken: null,
+            manualTestExpiresAt: null
+          }
+        },
+        { runValidators: true }
+      )
+
+      if (!result.matchedCount) {
+        throw new Error("Manual check processing claim expired")
+      }
+
+      return
+    }
 
     if (kind === "improvement") {
       const project = await Project.findOne({
@@ -310,6 +340,15 @@ async function processReview(job, shutdownSignal) {
     )
     const terminal = permanent || exhausted
     const failure = getSafeFailure(error)
+    let improvementMessage = "Generation could not finish. Please try again."
+
+    if (failure.code === "GITHUB_RECONNECT") {
+      improvementMessage = "Reconnect GitHub before trying again."
+    }
+
+    if (["AI_HIGH_DEMAND", "AI_RATE_LIMIT", "AI_INVALID_RESPONSE"].includes(error.code)) {
+      improvementMessage = error.publicMessage
+    }
 
     try {
       await Review.updateOne(
@@ -319,10 +358,8 @@ async function processReview(job, shutdownSignal) {
             [fields.status]: terminal ? "failed" : "queued",
             [fields.token]: null,
             [fields.expires]: null,
-            ...(kind === "improvement" ? {
-              improvementMessage: failure.code === "GITHUB_RECONNECT"
-                ? "Reconnect GitHub before requesting suggestions again."
-                : "Suggestions could not finish. Please try again."
+            ...(kind !== "review" ? {
+              [kind === "manualTest" ? "manualTestMessage" : "improvementMessage"]: improvementMessage
             } : {
               stage: "waiting",
               failure

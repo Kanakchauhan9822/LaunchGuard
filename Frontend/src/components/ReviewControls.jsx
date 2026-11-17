@@ -3,6 +3,7 @@ import { createReview, getReview, listReviews } from "../services/reviews"
 import { githubLoginUrl } from "../services/github"
 import ReviewFindings from "./ReviewFindings"
 import ReviewImprovements from "./ReviewImprovements"
+import ReviewManualTests from "./ReviewManualTests"
 
 const activeStatuses = new Set(["pending", "queued", "running"])
 
@@ -253,6 +254,13 @@ function ReviewControls({ projectId, disabled }) {
               <ReviewImprovements
                 key={`${review._id}-${review.improvementStatus || "new"}`}
                 review={review}
+                disabled={disabled || reconnect}
+              />
+            )}
+            {["partial", "completed"].includes(review.status) && (
+              <ReviewManualTests
+                key={`manual-tests-${review._id}`}
+                reviewId={review._id}
                 disabled={disabled || reconnect}
               />
             )}
