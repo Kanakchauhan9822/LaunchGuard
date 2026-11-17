@@ -106,5 +106,6 @@ async function getReviewSource(review, signal, onStage = async () => {}) {
 
 
 module.exports = {
-    getReviewSource
+    getReviewSource,
+    prepareReviewRepository
 }

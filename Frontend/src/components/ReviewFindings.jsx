@@ -1,31 +1,24 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { listFindings } from "../services/reviews"
+import FindingCard from "./FindingCard"
 
 function ReviewFindings({ reviewId }) {
   const [findings, setFindings] = useState([])
   const [nextCursor, setNextCursor] = useState(null)
   const [loaded, setLoaded] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const request = useRef(null)
 
-  useEffect(() => {
-    return () => request.current?.abort()
-  }, [])
-
-  async function loadFindings(cursor = null) {
+  const loadFindings = useCallback((cursor = null) => {
     if (request.current) {
       return
     }
 
     const controller = new AbortController()
     request.current = controller
-    setLoading(true)
-    setError("")
 
-    try {
-      const data = await listFindings(reviewId, cursor, controller.signal)
-
+    return listFindings(reviewId, cursor, controller.signal).then(data => {
       if (controller.signal.aborted) {
         return
       }
@@ -44,55 +37,66 @@ function ReviewFindings({ reviewId }) {
       })
       setNextCursor(data.nextCursor)
       setLoaded(true)
-    } catch (failure) {
+    }).catch(failure => {
       if (!controller.signal.aborted) {
         setError(failure.message)
       }
-    } finally {
+    }).finally(() => {
       if (!controller.signal.aborted) {
         request.current = null
         setLoading(false)
       }
+    })
+  }, [reviewId])
+
+  useEffect(() => {
+    void loadFindings()
+
+    return () => {
+      request.current?.abort()
+      request.current = null
     }
+  }, [loadFindings])
+
+  function requestFindings(cursor = null) {
+    if (request.current) {
+      return
+    }
+
+    setLoading(true)
+    setError("")
+    void loadFindings(cursor)
   }
 
   return (
     <section aria-label="Review findings">
-      {!loaded && (
+      {!loaded && !loading && (
         <button
           type="button"
-          onClick={() => loadFindings()}
+          onClick={() => requestFindings()}
           disabled={loading}
         >
-          Show findings
+          Retry loading findings
         </button>
       )}
 
       {loading && <p role="status">Loading findings...</p>}
       {error && <p role="alert">{error}</p>}
       {loaded && findings.length === 0 && <p>No saved findings for this review.</p>}
+      {loaded && findings.length > 0 && (
+        <p>Highest severity first: critical, high, medium, low, info. Severity is the scanner's priority, not proof of an exploitable vulnerability.</p>
+      )}
 
       <ul>
         {findings.map(finding => (
-          <li key={finding._id}>
-            <h4>{finding.title}</h4>
-            <p>{finding.tool} · {finding.severity} · {finding.category}</p>
-            <p>Rule: <code>{finding.ruleId}</code></p>
-            {finding.filePath && (
-              <p>
-                <code>{finding.filePath}</code>
-                {finding.startLine && ` — line ${finding.startLine}`}
-              </p>
-            )}
-            <p>{finding.message}</p>
-          </li>
+          <FindingCard key={finding._id} reviewId={reviewId} finding={finding} />
         ))}
       </ul>
 
       {nextCursor && (
         <button
           type="button"
-          onClick={() => loadFindings(nextCursor)}
+          onClick={() => requestFindings(nextCursor)}
           disabled={loading}
         >
           Load more findings

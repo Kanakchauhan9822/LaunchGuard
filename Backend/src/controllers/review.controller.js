@@ -5,6 +5,100 @@ const Finding = require("../models/finding.model")
 const { getLatestCommit } = require("../services/github.service")
 const { enqueueReview } = require("../services/review.service")
 
+const improvementFields = "improvementStatus improvements improvementFiles improvementMessage improvementModel"
+
+async function getImprovements(req, res, next) {
+  const { reviewId } = req.params
+
+  if (!mongoose.isObjectIdOrHexString(reviewId)) {
+    return res.status(400).json({ message: "Please provide a valid review ID" })
+  }
+
+  try {
+    const review = await Review.findOne({
+      _id: reviewId,
+      owner: req.user._id
+    }).select(improvementFields).lean()
+
+    if (!review) {
+      return res.status(404).json({ message: "Review not found" })
+    }
+
+    return res.json({ review })
+  } catch (error) {
+    next(error)
+  }
+}
+
+async function requestImprovements(req, res, next) {
+  const { reviewId } = req.params
+
+  if (!mongoose.isObjectIdOrHexString(reviewId)) {
+    return res.status(400).json({ message: "Please provide a valid review ID" })
+  }
+
+  const filter = { _id: reviewId, owner: req.user._id }
+
+  try {
+    let review = await Review.findOne(filter).select(`${improvementFields} status`).lean()
+
+    if (!review) {
+      return res.status(404).json({ message: "Review not found" })
+    }
+
+    if (!["completed", "partial"].includes(review.status)) {
+      return res.status(409).json({ message: "Complete a project review before requesting suggestions" })
+    }
+
+    if (review.improvementStatus === "completed") {
+      return res.json({ review })
+    }
+
+    if (["pending", "queued", "running"].includes(review.improvementStatus)) {
+      return res.status(202).json({ review })
+    }
+
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(503).json({ message: "AI service is not configured" })
+    }
+
+    const claimed = await Review.findOneAndUpdate(
+      {
+        ...filter,
+        improvementStatus: { $in: [null, "failed"] }
+      },
+      {
+        $set: {
+          improvementStatus: "pending",
+          improvementAttempts: 0,
+          improvementMessage: null,
+          improvementToken: null,
+          improvementExpiresAt: null
+        }
+      },
+      { returnDocument: "after", runValidators: true }
+    )
+
+    if (claimed) {
+      try {
+        await enqueueReview(reviewId, "improvement")
+      } catch {
+        console.error("Could not confirm suggestion enqueueing; recovery will retry")
+      }
+    }
+
+    review = await Review.findOne(filter).select(improvementFields).lean()
+
+    if (!review) {
+      return res.status(404).json({ message: "Review not found" })
+    }
+
+    return res.status(review.improvementStatus === "completed" ? 200 : 202).json({ review })
+  } catch (error) {
+    next(error)
+  }
+}
+
 
 async function createReview(req, res, next) {
   const { projectId, mode } = req.body || {}
@@ -247,17 +341,55 @@ async function listFindings(req, res, next) {
       review: reviewId
     }
 
+    const severities = ["info", "low", "medium", "high", "critical"]
+    const pipeline = [
+      { $match: { review: new mongoose.Types.ObjectId(reviewId) } },
+      { $addFields: { severityRank: { $indexOfArray: [severities, "$severity"] } } }
+    ]
+
     if (cursor) {
-      filter._id = {
-        $lt: cursor
+      const anchor = await Finding.findOne({
+        ...filter,
+        _id: cursor
+      }).select("severity").lean()
+
+      if (!anchor) {
+        return res.status(400).json({
+          message: "Findings changed. Reload findings before loading more"
+        })
       }
+
+      const severityRank = severities.indexOf(anchor.severity)
+
+      pipeline.push({
+        $match: {
+          $or: [
+            { severityRank: { $lt: severityRank } },
+            {
+              severityRank,
+              _id: { $lt: new mongoose.Types.ObjectId(cursor) }
+            }
+          ]
+        }
+      })
     }
 
-    const findings = await Finding.find(filter)
-      .select("-__v -fingerprint -review")
-      .sort({ _id: -1 })
-      .limit(21)
-      .lean()
+    pipeline.push(
+      { $sort: { severityRank: -1, _id: -1 } },
+      { $limit: 21 },
+      {
+        $project: {
+          __v: 0,
+          fingerprint: 0,
+          review: 0,
+          severityRank: 0,
+          explanationToken: 0,
+          explanationExpiresAt: 0
+        }
+      }
+    )
+
+    const findings = await Finding.aggregate(pipeline)
 
     const hasMore = findings.length > 20
     const page = findings.slice(0, 20)
@@ -272,6 +404,8 @@ async function listFindings(req, res, next) {
 }
 
 module.exports = {
+  getImprovements,
+  requestImprovements,
   createReview,
   getReview,
   listReviews,

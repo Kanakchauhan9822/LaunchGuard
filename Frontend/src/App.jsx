@@ -175,6 +175,9 @@ function App() {
           />
         </section>
       )}
+      <footer>
+        <small>Findings highlight possible issues, not confirmed bugs. Check the affected code before applying a fix.</small>
+      </footer>
     </main>
   )
 }

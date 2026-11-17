@@ -3,6 +3,7 @@ const { randomUUID } = require("node:crypto")
 const { Worker, UnrecoverableError } = require("bullmq")
 const Review = require("../models/review.model")
 const Finding = require("../models/finding.model")
+const Project = require("../models/project.model")
 const { createRedisConnection } = require("../config/redis")
 const { reviewProcessing } = require("../config/review")
 const { getReviewSource } = require("../services/repository.service")
@@ -10,6 +11,10 @@ const { scanWithGitleaks } = require("../services/gitleaks.service")
 const { scanWithOsv } = require("../services/osvScanner.service")
 const { scanWithSemgrep } = require("../services/semgrep.service")
 const { scanWithEslint } = require("../services/eslint.service")
+const { reviewJobs } = require("../services/review.service")
+const { selectImprovementFiles } = require("../services/improvementContext.service")
+const { generateImprovements } = require("../services/improvement.service")
+const { aiConfig } = require("../config/ai")
 
 const scanners = [
   { tool: "gitleaks", stage: "scanning-secrets", scan: scanWithGitleaks },
@@ -54,12 +59,14 @@ function startReviewWorker() {
 
 async function processReview(job, shutdownSignal) {
   const reviewId = job.data?.reviewId
+  const kind = job.name === reviewJobs.improvement.name ? "improvement" : "review"
+  const fields = reviewJobs[kind]
 
   if (
-    job.name !== "scan-project" ||
+    job.name !== fields.name ||
     typeof reviewId !== "string" ||
     !mongoose.isObjectIdOrHexString(reviewId) ||
-    job.id !== `review-${reviewId}`
+    job.id !== `${fields.prefix}-${reviewId}`
   ) {
     throw new UnrecoverableError("Invalid review job")
   }
@@ -75,37 +82,41 @@ async function processReview(job, shutdownSignal) {
         $and: [
           {
             $or: [
-              { status: { $in: ["pending", "queued"] } },
-              { status: "running", processingExpiresAt: { $lte: now } },
-              { status: "running", processingExpiresAt: null }
+              { [fields.status]: { $in: ["pending", "queued"] } },
+              { [fields.status]: "running", [fields.expires]: { $lte: now } },
+              { [fields.status]: "running", [fields.expires]: null }
             ]
           },
           {
             $or: [
-              { processingAttempts: { $lt: reviewProcessing.maxAttempts } },
-              { processingAttempts: { $exists: false } }
+              { [fields.attempts]: { $lt: reviewProcessing.maxAttempts } },
+              { [fields.attempts]: { $exists: false } }
             ]
           }
         ]
       },
       {
         $set: {
-          status: "running",
-          stage: "checking-access",
-          processingToken: token,
-          processingExpiresAt: new Date(Date.now() + reviewProcessing.leaseMs),
-          failure: null,
-          resultMessage: null
+          [fields.status]: "running",
+          [fields.token]: token,
+          [fields.expires]: new Date(Date.now() + reviewProcessing.leaseMs),
+          ...(kind === "improvement" ? {
+            improvementMessage: null
+          } : {
+            stage: "checking-access",
+            failure: null,
+            resultMessage: null
+          })
         },
-        $inc: { processingAttempts: 1 }
+        $inc: { [fields.attempts]: 1 }
       },
       { returnDocument: "after", runValidators: true }
-    ).select("+processingAttempts").lean()
+    ).select(`+${fields.attempts}`).lean()
 
     if (!review) {
-      const existing = await Review.findById(reviewId).select("status").lean()
+      const existing = await Review.findById(reviewId).select(fields.status).lean()
 
-      if (!existing || ["partial", "completed", "failed"].includes(existing.status)) {
+      if (!existing || ["partial", "completed", "failed"].includes(existing[fields.status])) {
         return
       }
 
@@ -123,14 +134,18 @@ async function processReview(job, shutdownSignal) {
   function ownedReviewFilter() {
     return {
       _id: reviewId,
-      status: "running",
-      processingToken: token,
-      processingExpiresAt: { $gt: new Date() }
+      [fields.status]: "running",
+      [fields.token]: token,
+      [fields.expires]: { $gt: new Date() }
     }
   }
 
   async function updateStage(stage) {
     signal.throwIfAborted()
+
+    if (kind === "improvement") {
+      return
+    }
 
     const result = await Review.updateOne(
       ownedReviewFilter(),
@@ -152,6 +167,49 @@ async function processReview(job, shutdownSignal) {
 
     const source = await getReviewSource(review, signal, updateStage)
     signal.throwIfAborted()
+
+    if (kind === "improvement") {
+      const project = await Project.findOne({
+        _id: review.project,
+        owner: review.owner
+      }).select("description").lean()
+
+      if (!project) {
+        throw new UnrecoverableError("Project not found")
+      }
+
+      const files = await selectImprovementFiles(source.files, signal)
+      const improvements = await generateImprovements(files, project.description, signal)
+      signal.throwIfAborted()
+      const priorities = ["high", "medium", "low"]
+      improvements.sort((first, second) => {
+        return priorities.indexOf(first.priority) - priorities.indexOf(second.priority)
+      })
+
+      const result = await Review.updateOne(
+        ownedReviewFilter(),
+        {
+          $set: {
+            improvements,
+            improvementFiles: files.map(file => file.path),
+            improvementModel: files.length > 0 ? aiConfig.model : null,
+            improvementStatus: "completed",
+            improvementMessage: files.length === 0
+              ? "No source files were available within the size and secret-check limits. No AI review was performed."
+              : null,
+            improvementToken: null,
+            improvementExpiresAt: null
+          }
+        },
+        { runValidators: true }
+      )
+
+      if (!result.matchedCount) {
+        throw new Error("Suggestion processing claim expired")
+      }
+
+      return
+    }
 
     const summary = {
       repositoryAnalysis: source.inspection,
@@ -247,7 +305,7 @@ async function processReview(job, shutdownSignal) {
       [400, 401, 403, 404, 409, 422].includes(error.status)
     )
     const exhausted = (
-      review.processingAttempts >= reviewProcessing.maxAttempts ||
+      review[fields.attempts] >= reviewProcessing.maxAttempts ||
       job.attemptsMade + 1 >= (job.opts.attempts || 1)
     )
     const terminal = permanent || exhausted
@@ -258,11 +316,17 @@ async function processReview(job, shutdownSignal) {
         ownedReviewFilter(),
         {
           $set: {
-            status: terminal ? "failed" : "queued",
-            stage: "waiting",
-            failure,
-            processingToken: null,
-            processingExpiresAt: null
+            [fields.status]: terminal ? "failed" : "queued",
+            [fields.token]: null,
+            [fields.expires]: null,
+            ...(kind === "improvement" ? {
+              improvementMessage: failure.code === "GITHUB_RECONNECT"
+                ? "Reconnect GitHub before requesting suggestions again."
+                : "Suggestions could not finish. Please try again."
+            } : {
+              stage: "waiting",
+              failure
+            })
           }
         },
         { runValidators: true }

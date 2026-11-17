@@ -45,3 +45,27 @@ export function listFindings(reviewId, cursor, signal) {
     { signal }
   )
 }
+
+export function explainFinding(reviewId, findingId, signal, regenerate = false) {
+  return apiRequest(
+    `/reviews/${encodeURIComponent(reviewId)}/findings/${encodeURIComponent(findingId)}/explanation`,
+    {
+      method: "POST",
+      signal,
+      body: JSON.stringify({ regenerate })
+    }
+  )
+}
+
+export function getImprovements(reviewId, signal) {
+  return apiRequest(`/reviews/${encodeURIComponent(reviewId)}/improvements`, {
+    signal
+  })
+}
+
+export function requestImprovements(reviewId, signal) {
+  return apiRequest(`/reviews/${encodeURIComponent(reviewId)}/improvements`, {
+    method: "POST",
+    signal
+  })
+}

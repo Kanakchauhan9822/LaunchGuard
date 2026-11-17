@@ -275,6 +275,53 @@ const scannerOutcomeSchema = new mongoose.Schema(
   }
 )
 
+const improvementSchema = new mongoose.Schema(
+  {
+    title: {
+      type: String,
+      required: true,
+      maxlength: 200
+    },
+    filePath: {
+      type: String,
+      required: true,
+      maxlength: 4096
+    },
+    startLine: {
+      type: Number,
+      required: true,
+      min: 1,
+      validate: Number.isSafeInteger
+    },
+    observation: {
+      type: String,
+      required: true,
+      maxlength: 1000
+    },
+    suggestion: {
+      type: String,
+      required: true,
+      maxlength: 1000
+    },
+    benefit: {
+      type: String,
+      required: true,
+      maxlength: 500
+    },
+    tradeoff: {
+      type: String,
+      required: true,
+      maxlength: 500
+    },
+    priority: {
+      type: String,
+      enum: ["low", "medium", "high"],
+      required: true
+    }
+  },
+  { _id: false }
+)
+
 const reviewSchema = new mongoose.Schema(
   {
     owner: {
@@ -332,6 +379,46 @@ const reviewSchema = new mongoose.Schema(
     scannerOutcomes: {
       type: [scannerOutcomeSchema],
       default: []
+    },
+    improvements: {
+      type: [improvementSchema],
+      default: [],
+      validate: values => values.length <= 5
+    },
+    improvementStatus: {
+      type: String,
+      enum: ["pending", "queued", "running", "completed", "failed"],
+      default: null
+    },
+    improvementFiles: {
+      type: [String],
+      default: []
+    },
+    improvementMessage: {
+      type: String,
+      default: null,
+      maxlength: 500
+    },
+    improvementModel: {
+      type: String,
+      default: null,
+      maxlength: 200
+    },
+    improvementAttempts: {
+      type: Number,
+      default: 0,
+      min: 0,
+      select: false
+    },
+    improvementToken: {
+      type: String,
+      default: null,
+      select: false
+    },
+    improvementExpiresAt: {
+      type: Date,
+      default: null,
+      select: false
     },
     coverage: {
       type: coverageSchema,
@@ -394,5 +481,6 @@ reviewSchema.index(
 
 reviewSchema.index({ owner: 1, project: 1, _id: -1 })
 reviewSchema.index({ status: 1, _id: 1 })
+reviewSchema.index({ improvementStatus: 1, _id: 1 })
 
 module.exports = mongoose.model("Review", reviewSchema)
