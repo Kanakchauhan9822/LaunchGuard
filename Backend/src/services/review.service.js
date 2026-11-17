@@ -2,36 +2,70 @@ const Review = require("../models/review.model")
 const { reviewQueue, withReviewQueue } = require("../queues/review.queue")
 const { reviewProcessing } = require("../config/review")
 
-async function enqueueReview(reviewId) {
+const reviewJobs = {
+  review: {
+    name: "scan-project",
+    prefix: "review",
+    status: "status",
+    token: "processingToken",
+    expires: "processingExpiresAt",
+    attempts: "processingAttempts"
+  },
+  improvement: {
+    name: "suggest-improvements",
+    prefix: "improvement",
+    status: "improvementStatus",
+    token: "improvementToken",
+    expires: "improvementExpiresAt",
+    attempts: "improvementAttempts"
+  }
+}
+
+async function enqueueReview(reviewId, kind = "review") {
   const id = reviewId.toString()
+  const fields = reviewJobs[kind]
 
   const review = await Review.findOne({
     _id: reviewId,
-    status: { $in: ["pending", "queued"] }
+    [fields.status]: { $in: ["pending", "queued"] }
   }).lean()
 
   if (!review) {
     return null
   }
 
+  const jobId = `${fields.prefix}-${id}`
+
+  if (kind === "improvement") {
+    const previous = await withReviewQueue(() => reviewQueue.getJob(jobId))
+
+    if (previous) {
+      const state = await withReviewQueue(() => previous.getState())
+
+      if (["completed", "failed"].includes(state)) {
+        await withReviewQueue(() => previous.remove())
+      }
+    }
+  }
+
   await withReviewQueue(() => reviewQueue.add(
-    "scan-project",
+    fields.name,
     {
       reviewId: id
     },
     {
-      jobId: `review-${id}`
+      jobId
     }
   ))
 
   return Review.findOneAndUpdate(
     {
       _id: reviewId,
-      status: "pending"
+      [fields.status]: "pending"
     },
     {
       $set: {
-        status: "queued"
+        [fields.status]: "queued"
       }
     },
     {
@@ -40,14 +74,15 @@ async function enqueueReview(reviewId) {
   )
 }
 
-async function recoverPendingReviews(cursor = null, shouldStop = () => false) {
+async function recoverPendingReviews(cursor = null, shouldStop = () => false, kind = "review") {
   const cutoff = new Date(Date.now() - 30000)
+  const fields = reviewJobs[kind]
 
   const filter = {
     $or: [
-      { status: { $in: ["pending", "queued"] } },
-      { status: "running", processingExpiresAt: { $lte: new Date() } },
-      { status: "running", processingExpiresAt: null }
+      { [fields.status]: { $in: ["pending", "queued"] } },
+      { [fields.status]: "running", [fields.expires]: { $lte: new Date() } },
+      { [fields.status]: "running", [fields.expires]: null }
     ],
     updatedAt: {
       $lte: cutoff
@@ -59,7 +94,7 @@ async function recoverPendingReviews(cursor = null, shouldStop = () => false) {
   }
 
   const reviews = await Review.find(filter)
-    .select("_id status updatedAt +processingAttempts")
+    .select(`_id ${fields.status} updatedAt +${fields.attempts}`)
     .sort({ _id: 1 })
     .limit(20)
     .lean()
@@ -70,16 +105,23 @@ async function recoverPendingReviews(cursor = null, shouldStop = () => false) {
     }
 
     try {
-      const job = await withReviewQueue(() => reviewQueue.getJob(`review-${review._id}`))
+      const job = await withReviewQueue(() => reviewQueue.getJob(`${fields.prefix}-${review._id}`))
       const jobState = job
         ? await withReviewQueue(() => job.getState())
         : "missing"
 
-      const attemptsExhausted = review.processingAttempts >= reviewProcessing.maxAttempts
+      const attemptsExhausted = review[fields.attempts] >= reviewProcessing.maxAttempts
+
+      if (kind === "improvement" && review[fields.status] === "pending" && !attemptsExhausted) {
+        await enqueueReview(review._id, kind)
+        cursor = review._id
+        continue
+      }
+
       const abandoned = (
         jobState === "failed" ||
         jobState === "completed" ||
-        (jobState === "missing" && review.status === "running") ||
+        (jobState === "missing" && review[fields.status] === "running") ||
         (jobState !== "active" && attemptsExhausted)
       )
 
@@ -87,24 +129,28 @@ async function recoverPendingReviews(cursor = null, shouldStop = () => false) {
         await Review.updateOne(
           {
             _id: review._id,
-            status: review.status,
+            [fields.status]: review[fields.status],
             updatedAt: review.updatedAt
           },
           {
             $set: {
-              status: "failed",
-              processingToken: null,
-              processingExpiresAt: null,
-              failure: {
-                code: "REVIEW_INTERRUPTED",
-                message: "Review processing stopped before saving a result. Please request a new review."
-              }
+              [fields.status]: "failed",
+              [fields.token]: null,
+              [fields.expires]: null,
+              ...(kind === "improvement" ? {
+                improvementMessage: "Suggestions were interrupted. Please try again."
+              } : {
+                failure: {
+                  code: "REVIEW_INTERRUPTED",
+                  message: "Review processing stopped before saving a result. Please request a new review."
+                }
+              })
             }
           },
           { runValidators: true }
         )
-      } else if (!job || review.status === "pending") {
-        await enqueueReview(review._id)
+      } else if (!job || review[fields.status] === "pending") {
+        await enqueueReview(review._id, kind)
       }
 
       cursor = review._id
@@ -123,10 +169,12 @@ function startReviewRecovery() {
   let timer
   let activeRun = Promise.resolve()
   let cursor = null
+  let improvementCursor = null
 
   async function runRecovery() {
     try {
       cursor = await recoverPendingReviews(cursor, () => stopped)
+      improvementCursor = await recoverPendingReviews(improvementCursor, () => stopped, "improvement")
     } catch {
       console.error("Review recovery failed")
     } finally {
@@ -154,6 +202,7 @@ function startReviewRecovery() {
 
 
 module.exports = {
+  reviewJobs,
   enqueueReview,
   recoverPendingReviews,
   startReviewRecovery

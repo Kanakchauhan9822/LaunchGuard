@@ -40,6 +40,27 @@ const findingSchema = new mongoose.Schema(
       trim: true,
       maxlength: 5000
     },
+    explanation: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null
+    },
+    explanationModel: {
+      type: String,
+      default: null,
+      maxlength: 200
+    },
+    explainedAt: {
+      type: Date,
+      default: null
+    },
+    explanationToken: {
+      type: String,
+      select: false
+    },
+    explanationExpiresAt: {
+      type: Date,
+      select: false
+    },
     filePath: {
       type: String,
       default: null,

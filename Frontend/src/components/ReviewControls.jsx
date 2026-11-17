@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { createReview, getReview, listReviews } from "../services/reviews"
 import { githubLoginUrl } from "../services/github"
 import ReviewFindings from "./ReviewFindings"
+import ReviewImprovements from "./ReviewImprovements"
 
 const activeStatuses = new Set(["pending", "queued", "running"])
 
@@ -241,25 +242,19 @@ function ReviewControls({ projectId, disabled }) {
             {review.failure && <p>{review.failure.message}</p>}
             <p>Requested: {new Date(review.createdAt).toLocaleString()}</p>
 
-            {review.scannerOutcomes?.length > 0 && (
-              <section aria-label="Scanner outcomes">
-                <h4>Scanner results</h4>
-                <ul>
-                  {review.scannerOutcomes.map(outcome => (
-                    <li key={outcome.tool}>
-                      <p>
-                        {outcome.tool} — {outcome.status}
-                        {" · "}{outcome.findingCount} findings
-                      </p>
-                      {outcome.reason && <p>{outcome.reason}</p>}
-                    </li>
-                  ))}
-                </ul>
-              </section>
+            {review.scannerOutcomes?.some(outcome => outcome.status !== "completed") && (
+              <p>Some checks could not finish or did not apply. These findings may not cover the whole project.</p>
             )}
 
             {["partial", "completed", "failed"].includes(review.status) && (
               <ReviewFindings key={review._id} reviewId={review._id} />
+            )}
+            {["partial", "completed"].includes(review.status) && (
+              <ReviewImprovements
+                key={`${review._id}-${review.improvementStatus || "new"}`}
+                review={review}
+                disabled={disabled || reconnect}
+              />
             )}
           </li>
         ))}
