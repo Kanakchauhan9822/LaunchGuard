@@ -6,6 +6,13 @@ const aiConfig = {
   maxImprovementCharacters: 12000
 }
 
+const testGenerationConfig = {
+  model: aiConfig.model,
+  timeoutMs: 60000,
+  maxOutputTokens: 4096
+}
+
 module.exports = {
-  aiConfig
+  aiConfig,
+  testGenerationConfig
 }

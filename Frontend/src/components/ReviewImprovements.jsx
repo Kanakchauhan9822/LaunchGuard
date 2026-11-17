@@ -118,12 +118,14 @@ function ReviewImprovements({ review, disabled }) {
           <ul>
             {result.improvements.map((improvement, index) => (
               <li key={`${improvement.filePath}-${improvement.startLine}-${index}`}>
-                <h5>{improvement.title}</h5>
-                <p><code>{improvement.filePath}</code> — line {improvement.startLine}</p>
-                <p>{improvement.observation}</p>
-                <p><strong>Try:</strong> {improvement.suggestion}</p>
-                <p><strong>Benefit:</strong> {improvement.benefit}</p>
-                <p><strong>Consider:</strong> {improvement.tradeoff}</p>
+                <details>
+                  <summary>{improvement.title}</summary>
+                  <p><code>{improvement.filePath}</code> — line {improvement.startLine}</p>
+                  <p>{improvement.observation}</p>
+                  <p><strong>Try:</strong> {improvement.suggestion}</p>
+                  <p><strong>Benefit:</strong> {improvement.benefit}</p>
+                  <p><strong>Consider:</strong> {improvement.tradeoff}</p>
+                </details>
               </li>
             ))}
           </ul>

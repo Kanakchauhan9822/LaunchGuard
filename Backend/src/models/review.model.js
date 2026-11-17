@@ -322,6 +322,43 @@ const improvementSchema = new mongoose.Schema(
   { _id: false }
 )
 
+const manualTestSchema = new mongoose.Schema({
+  title: {
+    type: String,
+    required: true,
+    trim: true,
+    maxlength: 200
+  },
+  preparation: {
+    type: String,
+    trim: true,
+    default: "",
+    maxlength: 1000
+  },
+  steps: {
+    type: [
+      {
+        type: String,
+        required: true,
+        trim: true,
+        maxlength: 1000
+      }
+    ],
+    required: true,
+    validate: values => values.length > 0 && values.length <= 10
+  },
+  expectedResult: {
+    type: String,
+    required: true,
+    trim: true,
+    maxlength: 1000
+  },
+  checkedAt: {
+    type: Date,
+    default: null
+  }
+})
+
 const reviewSchema = new mongoose.Schema(
   {
     owner: {
@@ -384,6 +421,49 @@ const reviewSchema = new mongoose.Schema(
       type: [improvementSchema],
       default: [],
       validate: values => values.length <= 5
+    },
+    manualTests: {
+      type: [manualTestSchema],
+      default: []
+    },
+    manualTestKey: {
+      type: String,
+      select: false
+    },
+    manualTestDescription: {
+      type: String,
+      select: false,
+      maxlength: 5000
+    },
+    manualTestStatus: {
+      type: String,
+      enum: ["pending", "queued", "running", "completed", "failed"],
+      default: null
+    },
+    manualTestFiles: {
+      type: [String],
+      default: []
+    },
+    manualTestMessage: {
+      type: String,
+      default: null,
+      maxlength: 500
+    },
+    manualTestAttempts: {
+      type: Number,
+      default: 0,
+      min: 0,
+      select: false
+    },
+    manualTestToken: {
+      type: String,
+      default: null,
+      select: false
+    },
+    manualTestExpiresAt: {
+      type: Date,
+      default: null,
+      select: false
     },
     improvementStatus: {
       type: String,
@@ -482,5 +562,7 @@ reviewSchema.index(
 reviewSchema.index({ owner: 1, project: 1, _id: -1 })
 reviewSchema.index({ status: 1, _id: 1 })
 reviewSchema.index({ improvementStatus: 1, _id: 1 })
+reviewSchema.index({ manualTestStatus: 1, _id: 1 })
+reviewSchema.index({ manualTestKey: 1 }, { unique: true, sparse: true })
 
 module.exports = mongoose.model("Review", reviewSchema)

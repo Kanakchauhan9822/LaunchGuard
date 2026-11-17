@@ -21,7 +21,8 @@ async function generateImprovements(files, projectDescription, signal) {
         "Avoid unnecessary abstractions, stylistic preferences and arbitrary function-length limits.",
         "These are maintainability suggestions, not confirmed bugs or vulnerabilities.",
         "Use simple English and give concrete observations supported by the code.",
-        "Use actual file paths and one-based line numbers.",
+        "Use only the supplied file paths and numbered source lines. Each file includes its lineCount.",
+        "Choose the exact numbered line containing the suggested change, never a line beyond that file's lineCount.",
         "Give a practical change, its benefit and its trade-off.",
         "Return at most five concise suggestions. Return an empty list if none are worthwhile.",
         "Do not repeat secrets, execute code or claim tests were run."
@@ -31,7 +32,15 @@ async function generateImprovements(files, projectDescription, signal) {
       role: "user",
       content: JSON.stringify({
         projectDescription,
-        files
+        files: files.map(file => {
+          const lines = file.content.split(/\r?\n/)
+
+          return {
+            path: file.path,
+            lineCount: lines.length,
+            content: lines.map((line, index) => `${index + 1}: ${line}`).join("\n")
+          }
+        })
       })
     }
   ]
@@ -51,8 +60,11 @@ async function generateImprovements(files, projectDescription, signal) {
               type: "object",
               properties: {
                 title: { type: "string" },
-                filePath: { type: "string" },
-                startLine: { type: "integer" },
+                filePath: {
+                  type: "string",
+                  enum: files.map(file => file.path)
+                },
+                startLine: { type: "integer", minimum: 1 },
                 observation: { type: "string" },
                 suggestion: { type: "string" },
                 benefit: { type: "string" },
@@ -86,7 +98,7 @@ async function generateImprovements(files, projectDescription, signal) {
   const data = JSON.parse(content)
 
   if (!Array.isArray(data?.improvements)) {
-    throw new Error("AI returned invalid suggestions")
+    throw invalidSuggestionResponse()
   }
 
   const sourceLines = new Map(
@@ -105,7 +117,7 @@ async function generateImprovements(files, projectDescription, signal) {
       improvement.startLine < 1 ||
       improvement.startLine > lineCount
     ) {
-      throw new Error("AI returned a location outside the reviewed code")
+      throw invalidSuggestionResponse()
     }
   }
 
@@ -113,9 +125,21 @@ async function generateImprovements(files, projectDescription, signal) {
     improvements: data.improvements
   })
 
-  await review.validate(["improvements"])
+  try {
+    await review.validate(["improvements"])
+  } catch {
+    throw invalidSuggestionResponse()
+  }
 
   return review.improvements.map(improvement => improvement.toObject())
+}
+
+function invalidSuggestionResponse() {
+  return Object.assign(new Error("AI returned invalid suggestions"), {
+    status: 502,
+    code: "AI_INVALID_RESPONSE",
+    publicMessage: "The AI could not prepare usable suggestions. Please try again."
+  })
 }
 
 module.exports = {

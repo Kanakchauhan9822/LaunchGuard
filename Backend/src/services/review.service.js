@@ -11,6 +11,14 @@ const reviewJobs = {
     expires: "processingExpiresAt",
     attempts: "processingAttempts"
   },
+  manualTest: {
+    name: "generate-manual-tests",
+    prefix: "manual-test",
+    status: "manualTestStatus",
+    token: "manualTestToken",
+    expires: "manualTestExpiresAt",
+    attempts: "manualTestAttempts"
+  },
   improvement: {
     name: "suggest-improvements",
     prefix: "improvement",
@@ -36,7 +44,7 @@ async function enqueueReview(reviewId, kind = "review") {
 
   const jobId = `${fields.prefix}-${id}`
 
-  if (kind === "improvement") {
+  if (kind !== "review") {
     const previous = await withReviewQueue(() => reviewQueue.getJob(jobId))
 
     if (previous) {
@@ -112,7 +120,7 @@ async function recoverPendingReviews(cursor = null, shouldStop = () => false, ki
 
       const attemptsExhausted = review[fields.attempts] >= reviewProcessing.maxAttempts
 
-      if (kind === "improvement" && review[fields.status] === "pending" && !attemptsExhausted) {
+      if (kind !== "review" && review[fields.status] === "pending" && !attemptsExhausted) {
         await enqueueReview(review._id, kind)
         cursor = review._id
         continue
@@ -137,8 +145,8 @@ async function recoverPendingReviews(cursor = null, shouldStop = () => false, ki
               [fields.status]: "failed",
               [fields.token]: null,
               [fields.expires]: null,
-              ...(kind === "improvement" ? {
-                improvementMessage: "Suggestions were interrupted. Please try again."
+              ...(kind !== "review" ? {
+                [kind === "manualTest" ? "manualTestMessage" : "improvementMessage"]: "Generation was interrupted. Please try again."
               } : {
                 failure: {
                   code: "REVIEW_INTERRUPTED",
@@ -170,11 +178,13 @@ function startReviewRecovery() {
   let activeRun = Promise.resolve()
   let cursor = null
   let improvementCursor = null
+  let manualTestCursor = null
 
   async function runRecovery() {
     try {
       cursor = await recoverPendingReviews(cursor, () => stopped)
       improvementCursor = await recoverPendingReviews(improvementCursor, () => stopped, "improvement")
+      manualTestCursor = await recoverPendingReviews(manualTestCursor, () => stopped, "manualTest")
     } catch {
       console.error("Review recovery failed")
     } finally {
