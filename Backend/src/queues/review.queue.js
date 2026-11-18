@@ -53,6 +53,7 @@ async function closeReviewQueue() {
 }
 
 module.exports = {
+  reviewRedis: connection,
   reviewQueue,
   withReviewQueue,
   closeReviewQueue

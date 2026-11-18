@@ -1,12 +1,12 @@
 import { apiRequest } from "./api"
 
-export function createReview(projectId, signal) {
+export function createReview(projectId, signal, mode = "entire-project") {
   return apiRequest("/reviews", {
     method: "POST",
     signal,
     body: JSON.stringify({
       projectId,
-      mode: "entire-project"
+      mode
     })
   })
 }
@@ -31,8 +31,8 @@ export function listReviews(projectId, cursor, signal) {
   })
 }
 
-export function listFindings(reviewId, cursor, signal) {
-  const params = new URLSearchParams()
+export function listFindings(reviewId, cursor, signal, changeStatus = "active") {
+  const params = new URLSearchParams({ changeStatus, grouped: "true" })
 
   if (cursor) {
     params.set("cursor", cursor)

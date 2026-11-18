@@ -1,6 +1,7 @@
 const Review = require("../models/review.model")
 const { reviewQueue, withReviewQueue } = require("../queues/review.queue")
 const { reviewProcessing } = require("../config/review")
+const { aiConfig } = require("../config/ai")
 
 const reviewJobs = {
   review: {
@@ -27,6 +28,18 @@ const reviewJobs = {
     expires: "improvementExpiresAt",
     attempts: "improvementAttempts"
   }
+}
+
+async function getBaselineReview(owner, project, branch) {
+  return Review.findOne({
+    owner,
+    project,
+    branch,
+    status: "completed"
+  })
+    .select("_id commitSha")
+    .sort({ _id: -1 })
+    .lean()
 }
 
 async function enqueueReview(reviewId, kind = "review") {
@@ -62,7 +75,10 @@ async function enqueueReview(reviewId, kind = "review") {
       reviewId: id
     },
     {
-      jobId
+      jobId,
+      delay: kind !== "review" && review[`${kind}Coverage`]?.completedParts > 0
+        ? aiConfig.improvementBatchDelayMs
+        : 0
     }
   ))
 
@@ -213,6 +229,7 @@ function startReviewRecovery() {
 
 module.exports = {
   reviewJobs,
+  getBaselineReview,
   enqueueReview,
   recoverPendingReviews,
   startReviewRecovery

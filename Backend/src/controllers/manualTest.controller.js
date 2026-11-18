@@ -2,9 +2,10 @@ const mongoose = require("mongoose")
 const { createHash } = require("node:crypto")
 const Review = require("../models/review.model")
 const Project = require("../models/project.model")
+const { aiConfig } = require("../config/ai")
 const { enqueueReview } = require("../services/review.service")
 
-const manualTestFields = "manualTests manualTestStatus manualTestFiles manualTestMessage"
+const manualTestFields = "manualTests manualTestStatus manualTestFiles manualTestMessage manualTestVersion manualTestCoverage"
 
 async function findManualTestReview(req) {
   const { reviewId } = req.params
@@ -75,7 +76,10 @@ async function requestManualTests(req, res, next) {
       })
     }
 
-    if (saved && saved.manualTestStatus !== "failed") {
+    const currentVersion = saved?.manualTestVersion === aiConfig.manualTestVersion
+    const active = ["pending", "queued", "running"].includes(saved?.manualTestStatus)
+
+    if (saved && (active || (saved.manualTestStatus === "completed" && currentVersion))) {
       return res.status(saved.manualTestStatus === "completed" ? 200 : 202).json({ review: saved })
     }
 
@@ -87,7 +91,7 @@ async function requestManualTests(req, res, next) {
       {
         _id: saved?._id || review._id,
         owner: req.user._id,
-        manualTestStatus: { $in: saved ? [null, "failed"] : [null, "failed", "completed"] },
+        manualTestStatus: { $in: [null, "failed", ...(!currentVersion ? ["completed"] : [])] },
         ...(!saved ? {
           manualTestKey: review.manualTestKey || { $exists: false }
         } : {})
@@ -95,8 +99,13 @@ async function requestManualTests(req, res, next) {
       {
         $set: {
           manualTestKey: key,
-          manualTests: [],
-          manualTestFiles: [],
+          ...(!saved ? { manualTests: [] } : {}),
+          ...(!currentVersion ? {
+            manualTestFiles: [],
+            manualTestCompletedParts: [],
+            manualTestCoverage: {}
+          } : {}),
+          manualTestVersion: aiConfig.manualTestVersion,
           manualTestDescription: project.description,
           manualTestStatus: "pending",
           manualTestAttempts: 0,

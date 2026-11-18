@@ -1,9 +1,10 @@
 const Project = require("../models/project.model")
 const User = require("../models/user.model")
-const { getRepositories, getRepositoryTree, createRepositoryBlobReader, githubError } = require("./github.service")
+const { getRepositories, getRepositoryTree, getChangedFiles, createRepositoryBlobReader, githubError } = require("./github.service")
 const { selectRepositoryFiles } = require("./repositoryFiles.service")
 const { downloadRepositoryFiles } = require("./repositoryDownload.service")
 const { inspectRepository } = require("./repositoryInspection.service")
+const { selectRelatedFiles } = require("./repositoryImports.service")
 
 async function getReviewRepository(review, signal) {
     const project = await Project.findOne({
@@ -62,12 +63,38 @@ async function prepareReviewRepository(review, signal) {
         signal
     )
 
+    let changedFiles = null
+    let fallbackReason = null
+
+    if (review.mode === "latest-changes") {
+        try {
+            changedFiles = await getChangedFiles(
+                userId,
+                sessionId,
+                repository,
+                review.baseCommitSha,
+                review.commitSha,
+                signal
+            )
+        } catch (error) {
+            signal?.throwIfAborted()
+
+            if (![409, 422].includes(error.status) || error.code === "GITHUB_RECONNECT") {
+                throw error
+            }
+
+            fallbackReason = "The saved commits could not be fully compared. The entire project was scanned instead."
+        }
+    }
+
     return {
         userId,
         sessionId,
         repository,
         commitSha: review.commitSha,
         tree,
+        changedFiles,
+        fallbackReason,
         selection: selectRepositoryFiles(tree)
     }
 }
@@ -93,19 +120,41 @@ async function getReviewSource(review, signal, onStage = async () => {}) {
 
     const source = await downloadRepositoryFiles(prepared.selection, readBlob, signal)
     signal?.throwIfAborted()
+    let files = source.files
+    let fallbackReason = prepared.fallbackReason
+
+    if (review.mode === "latest-changes" && !fallbackReason) {
+        try {
+            if (source.skipped.some(file => /\.(js|jsx|mjs|cjs|ts|tsx|vue|svelte)$/.test(file.path))) {
+                throw new Error("Some source files could not be inspected")
+            }
+
+            files = selectRelatedFiles(source.files, prepared.changedFiles, prepared.tree, signal)
+        } catch {
+            signal?.throwIfAborted()
+            fallbackReason = "Related files could not be mapped reliably. The entire project was scanned instead."
+        }
+    }
+
     await onStage("inspecting-repository")
     const inspection = inspectRepository(source.files, prepared.tree)
 
     return {
         repository: prepared.repository,
         commitSha: prepared.commitSha,
+        changedFiles: prepared.changedFiles,
         ...source,
+        files,
+        allPaths: new Set(prepared.tree.filter(entry => entry.type === "blob").map(entry => entry.path)),
+        scanScope: review.mode === "latest-changes" && !fallbackReason ? "changed-and-related" : "entire-project",
+        fallbackReason,
         inspection
     }
 }
 
 
 module.exports = {
+    getReviewRepository,
     getReviewSource,
     prepareReviewRepository
 }
