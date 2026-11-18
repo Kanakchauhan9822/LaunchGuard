@@ -11,7 +11,19 @@ function ReviewManualTests({ reviewId, disabled }) {
   const [refreshVersion, setRefreshVersion] = useState(0)
   const request = useRef(null)
   const active = activeStatuses.has(result?.manualTestStatus)
-  const completed = result?.manualTestStatus === "completed"
+  const wholeApplication = result?.manualTestVersion >= 2
+  const completed = result?.manualTestStatus === "completed" && wholeApplication
+  const legacy = result?.manualTestStatus === "completed" && !wholeApplication
+  const coverage = result?.manualTestCoverage
+  let buttonLabel = "Generate manual checks"
+
+  if (legacy) {
+    buttonLabel = "Review whole application"
+  } else if (coverage?.completedParts > 0) {
+    buttonLabel = "Continue manual checks"
+  } else if (result?.manualTestStatus === "failed") {
+    buttonLabel = "Try generating checks again"
+  }
 
   useEffect(() => {
     return () => request.current?.abort()
@@ -95,7 +107,7 @@ function ReviewManualTests({ reviewId, disabled }) {
       <h4>Manual checks</h4>
       {!completed && !active && result && (
         <button type="button" onClick={() => save()} disabled={disabled || loading || saving}>
-          {result.manualTestStatus === "failed" ? "Try generating checks again" : "Generate manual checks"}
+          {buttonLabel}
         </button>
       )}
       {(loading || active || (saving && !completed)) && !error && (
@@ -103,6 +115,21 @@ function ReviewManualTests({ reviewId, disabled }) {
           <span className="loading-spinner" aria-hidden="true" />
         </div>
       )}
+      {coverage?.eligibleFiles > 0 && (
+        <p role="status">
+          Manual checks reviewed {coverage.reviewedFiles} of {coverage.eligibleFiles} eligible JavaScript/TypeScript files.
+          {active && ` Processed ${coverage.completedParts} of ${coverage.totalParts} code sections.`}
+        </p>
+      )}
+      {coverage?.excluded?.length > 0 && (
+        <details>
+          <summary>Files not reviewed ({coverage.excluded.length})</summary>
+          <ul>
+            {coverage.excluded.map(file => <li key={file.path}>{file.path}: {file.reason}</li>)}
+          </ul>
+        </details>
+      )}
+      {legacy && <p>These saved checks used a limited code sample. Review the whole application to extend them.</p>}
       {error && (
         <>
           <p role="alert">{error}</p>
@@ -117,12 +144,12 @@ function ReviewManualTests({ reviewId, disabled }) {
       {result?.manualTestStatus === "failed" && !error && (
         <p role="alert">{result.manualTestMessage || "Manual checks could not be generated. Please try again."}</p>
       )}
-      {completed && (
+      {(completed || result?.manualTests?.length > 0) && (
         <>
           <details>
             <summary>Show saved manual checks</summary>
             {result.manualTestFiles?.length > 0 && (
-              <p>Checks based on your description and selected files: {result.manualTestFiles.join(", ")}.</p>
+              <p>Checks based on your description and reviewed files: {result.manualTestFiles.join(", ")}.</p>
             )}
             {result.manualTestMessage && <p>{result.manualTestMessage}</p>}
             {!result.manualTestMessage && result.manualTests.length === 0 && (
@@ -141,7 +168,7 @@ function ReviewManualTests({ reviewId, disabled }) {
                     <button
                       type="button"
                       onClick={() => save(test._id)}
-                      disabled={disabled || saving || loading || Boolean(test.checkedAt)}
+                      disabled={disabled || saving || loading || active || result.manualTestStatus !== "completed" || Boolean(test.checkedAt)}
                     >
                       {test.checkedAt ? "Checked" : "Mark as checked"}
                     </button>

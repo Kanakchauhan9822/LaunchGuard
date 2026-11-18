@@ -1,4 +1,5 @@
 const mongoose = require("mongoose")
+const { aiConfig } = require("../config/ai")
 
 const dependencySchema = new mongoose.Schema(
   {
@@ -359,6 +360,20 @@ const manualTestSchema = new mongoose.Schema({
   }
 })
 
+const aiCoverageSchema = new mongoose.Schema(
+  {
+    eligibleFiles: { type: Number, default: 0 },
+    reviewedFiles: { type: Number, default: 0 },
+    totalParts: { type: Number, default: 0 },
+    completedParts: { type: Number, default: 0 },
+    excluded: {
+      type: [{ path: String, reason: String, _id: false }],
+      default: []
+    }
+  },
+  { _id: false }
+)
+
 const reviewSchema = new mongoose.Schema(
   {
     owner: {
@@ -383,6 +398,39 @@ const reviewSchema = new mongoose.Schema(
     baseCommitSha: {
       type: String,
       default: null
+    },
+    baseReview: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Review",
+      default: null
+    },
+    scanScope: {
+      type: String,
+      enum: ["entire-project", "changed-and-related"],
+      default: "entire-project"
+    },
+    fallbackReason: {
+      type: String,
+      default: null,
+      maxlength: 500
+    },
+    reviewedFiles: {
+      type: [String],
+      default: []
+    },
+    changedFiles: {
+      type: [{
+        path: { type: String, required: true, maxlength: 4096 },
+        previousPath: { type: String, default: null, maxlength: 4096 },
+        status: { type: String, required: true, maxlength: 30 },
+        _id: false
+      }],
+      default: []
+    },
+    findingCounts: {
+      new: { type: Number, default: 0, min: 0 },
+      existing: { type: Number, default: 0, min: 0 },
+      resolved: { type: Number, default: 0, min: 0 }
     },
     branch: {
       type: String,
@@ -420,12 +468,16 @@ const reviewSchema = new mongoose.Schema(
     improvements: {
       type: [improvementSchema],
       default: [],
-      validate: values => values.length <= 5
+      validate: values => values.length <= aiConfig.maxImprovements
     },
     manualTests: {
       type: [manualTestSchema],
-      default: []
+      default: [],
+      validate: values => values.length <= aiConfig.maxManualTests
     },
+    manualTestVersion: { type: Number, default: 0 },
+    manualTestCompletedParts: { type: [String], default: [], select: false },
+    manualTestCoverage: { type: aiCoverageSchema, default: () => ({}) },
     manualTestKey: {
       type: String,
       select: false
@@ -474,6 +526,16 @@ const reviewSchema = new mongoose.Schema(
       type: [String],
       default: []
     },
+    improvementVersion: {
+      type: Number,
+      default: 0
+    },
+    improvementCompletedParts: {
+      type: [String],
+      default: [],
+      select: false
+    },
+    improvementCoverage: { type: aiCoverageSchema, default: () => ({}) },
     improvementMessage: {
       type: String,
       default: null,

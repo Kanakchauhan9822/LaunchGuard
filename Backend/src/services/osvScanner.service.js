@@ -237,9 +237,25 @@ function convertPackage(entry, filePath, ecosystem) {
       ]))
       .digest("hex")
 
-    let message = `OSV-Scanner matched ${dependency.name}@${dependency.version} to ${ruleId}. `
+    const fixedVersions = [...new Set(vulnerabilities
+      .filter(vulnerability => ids.includes(vulnerability.id))
+      .flatMap(vulnerability => vulnerability.affected || [])
+      .filter(affected => affected.package?.name === dependency.name && affected.package.ecosystem === ecosystem)
+      .flatMap(affected => affected.ranges || [])
+      .filter(range => range.type === "SEMVER" || range.type === "ECOSYSTEM")
+      .flatMap(range => range.events || [])
+      .map(event => event.fixed)
+      .filter(version => typeof version === "string" && /^[a-zA-Z0-9.+_-]{1,256}$/.test(version)))]
+      .sort()
+      .slice(0, 20)
+
+    let message = `The installed package ${dependency.name}@${dependency.version} has a reported vulnerability (${ruleId}). `
     message += `See https://osv.dev/vulnerability/${ruleId}. `
-    message += "This dependency match does not prove the application can be exploited."
+    message += fixedVersions.length > 0
+      ? "Fix versions are listed with this finding. Check compatibility and other advisories before upgrading. "
+      : "No fix version was reported for this issue. Check the advisory for update guidance. "
+    message += "Use the package manager to update the dependency and regenerate the lockfile; do not edit the lockfile manually. "
+    message += "The affected dependency may not be reachable in this application."
 
     if (!severity) {
       message += " Severity was unavailable; info is a placeholder, not a low-risk assessment."
@@ -250,7 +266,8 @@ function convertPackage(entry, filePath, ecosystem) {
       ruleId,
       severity: severity || "info",
       category: "dependency",
-      title: `Known dependency vulnerability: ${ruleId}`,
+      title: `${dependency.name} has a known vulnerability`,
+      dependency: { name: dependency.name, version: dependency.version, fixedVersions },
       message,
       filePath,
       startLine: null,

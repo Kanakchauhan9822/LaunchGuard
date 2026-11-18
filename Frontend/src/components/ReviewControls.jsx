@@ -156,7 +156,7 @@ function ReviewControls({ projectId, disabled }) {
     }
   }, [activeId, reconnect, pollVersion])
 
-  async function requestReview() {
+  async function requestReview(mode = "entire-project") {
     if (submitting.current || reading.current || disabled || !ready || activeReview || reconnect) {
       return
     }
@@ -169,7 +169,7 @@ function ReviewControls({ projectId, disabled }) {
     setError("")
 
     try {
-      const data = await createReview(projectId, signal)
+      const data = await createReview(projectId, signal, mode)
 
       if (signal.aborted) {
         return
@@ -210,10 +210,17 @@ function ReviewControls({ projectId, disabled }) {
     <section aria-label="Project reviews">
       <button
         type="button"
-        onClick={requestReview}
+        onClick={() => requestReview()}
         disabled={disabled || loading || saving || !ready || Boolean(activeReview) || reconnect}
       >
         {saving ? "Submitting review..." : "Review Entire Project"}
+      </button>
+      <button
+        type="button"
+        onClick={() => requestReview("latest-changes")}
+        disabled={disabled || loading || saving || !ready || Boolean(activeReview) || reconnect}
+      >
+        Review Latest Changes
       </button>
       <button
         type="button"
@@ -238,6 +245,22 @@ function ReviewControls({ projectId, disabled }) {
             </p>
 
             <p>Commit: <code>{review.commitSha}</code></p>
+            {review.mode === "latest-changes" && (
+              <>
+                <p>Compared with: <code>{review.baseCommitSha}</code></p>
+                {["completed", "partial"].includes(review.status) && (
+                  <>
+                    <p>{review.scanScope === "changed-and-related" ? "Changed files and directly related code" : "Entire-project scan"}</p>
+                    {review.fallbackReason && <p>{review.fallbackReason}</p>}
+                    <p>
+                      New: {review.findingCounts?.new || 0}{" · "}
+                      Existing: {review.findingCounts?.existing || 0}{" · "}
+                      Resolved: {review.findingCounts?.resolved || 0}
+                    </p>
+                  </>
+                )}
+              </>
+            )}
             {review.stage && <p>Stage: {review.stage}</p>}
             {review.resultMessage && <p>{review.resultMessage}</p>}
             {review.failure && <p>{review.failure.message}</p>}
@@ -248,7 +271,7 @@ function ReviewControls({ projectId, disabled }) {
             )}
 
             {["partial", "completed", "failed"].includes(review.status) && (
-              <ReviewFindings key={review._id} reviewId={review._id} />
+              <ReviewFindings key={review._id} reviewId={review._id} compared={review.mode === "latest-changes"} />
             )}
             {["partial", "completed"].includes(review.status) && (
               <ReviewImprovements

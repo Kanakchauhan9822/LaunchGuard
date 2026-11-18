@@ -231,6 +231,81 @@ async function getLatestCommit(userId, sessionId, project) {
   }
 }
 
+async function getChangedFiles(userId, sessionId, repository, baseCommitSha, commitSha, signal) {
+  const validCommits = [baseCommitSha, commitSha].every(sha => {
+    return typeof sha === "string" && /^[a-f0-9]{40}$/i.test(sha)
+  })
+
+  if (!validCommits) {
+    throw githubError(400, "The comparison contains an invalid commit SHA")
+  }
+
+  const client = await getAuthenticatedClient(userId, sessionId, signal)
+  const [owner, repo] = repository.fullName.split("/")
+
+  try {
+    signal?.throwIfAborted()
+
+    const { data } = await client.rest.repos.compareCommitsWithBasehead({
+      owner,
+      repo,
+      basehead: `${baseCommitSha}...${commitSha}`,
+      page: 1,
+      per_page: 1
+    })
+
+    if (!["ahead", "identical"].includes(data.status)) {
+      throw githubError(
+        409,
+        "The branch history has changed. Run an entire-project review first"
+      )
+    }
+
+    if (!Array.isArray(data.files) || data.files.length >= 300) {
+      throw githubError(
+        422,
+        "The comparison may exceed the changed-file limit. Run an entire-project review"
+      )
+    }
+
+    return data.files.map(file => ({
+      path: file.filename,
+      previousPath: file.previous_filename || null,
+      status: file.status
+    }))
+  } catch (error) {
+    signal?.throwIfAborted()
+
+    if (error.publicMessage) {
+      throw error
+    }
+
+    if (error.status === 401) {
+      throw githubError(
+        401,
+        "GitHub authorization expired. Please reconnect GitHub",
+        "GITHUB_RECONNECT"
+      )
+    }
+
+    if (error.status === 403 || error.status === 429) {
+      throw githubError(
+        503,
+        "GitHub denied access or temporarily limited requests"
+      )
+    }
+
+    if (error.status === 404 || error.status === 422) {
+      throw githubError(
+        409,
+        "The saved commits could not be compared. Check repository access or run an entire-project review"
+      )
+    }
+
+    throw githubError(502, "Could not retrieve the changed files")
+  }
+}
+
 async function getRepositoryTree(userId, sessionId, repository, commitSha, signal) {
   if (
     typeof commitSha !== "string" ||
@@ -412,6 +487,7 @@ module.exports = {
   getProfile,
   getRepositories,
   getLatestCommit,
+  getChangedFiles,
   getRepositoryTree,
   createRepositoryBlobReader,
   githubError

@@ -85,6 +85,14 @@ async function generateAiResponse(messages, signal, responseFormat, config = aiC
     const choice = data.choices?.[0]
     const content = choice?.message?.content
 
+    if (choice?.finish_reason === "length") {
+      throw Object.assign(new Error("AI response exceeded its output budget"), {
+        status: 502,
+        code: "AI_RESPONSE_TOO_LONG",
+        publicMessage: "The AI response was cut short before it finished. Please try again."
+      })
+    }
+
     if (
       choice?.finish_reason !== "stop" ||
       typeof content !== "string" ||
@@ -97,7 +105,7 @@ async function generateAiResponse(messages, signal, responseFormat, config = aiC
   } catch (error) {
     signal?.throwIfAborted()
 
-    if (["AI_HIGH_DEMAND", "AI_RATE_LIMIT", "AI_INVALID_RESPONSE"].includes(error.code)) {
+    if (["AI_HIGH_DEMAND", "AI_RATE_LIMIT", "AI_INVALID_RESPONSE", "AI_RESPONSE_TOO_LONG"].includes(error.code)) {
       throw error
     }
 

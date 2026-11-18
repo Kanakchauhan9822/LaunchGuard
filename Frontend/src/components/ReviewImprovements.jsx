@@ -10,7 +10,10 @@ function ReviewImprovements({ review, disabled }) {
   const [pollVersion, setPollVersion] = useState(0)
   const request = useRef(null)
   const active = activeStatuses.has(result.improvementStatus)
-  const completed = result.improvementStatus === "completed"
+  const wholeCodeReview = result.improvementVersion >= 3
+  const completed = result.improvementStatus === "completed" && wholeCodeReview
+  const legacy = result.improvementStatus === "completed" && !wholeCodeReview
+  const coverage = result.improvementCoverage
 
   useEffect(() => {
     return () => request.current?.abort()
@@ -86,13 +89,29 @@ function ReviewImprovements({ review, disabled }) {
       <h4>Coding suggestions</h4>
       {!completed && !active && (
         <button type="button" onClick={suggestImprovements} disabled={disabled || submitting}>
-          {result.improvementStatus === "failed" || error ? "Try suggestions again" : "Suggest improvements"}
+          {legacy ? "Review whole codebase" : coverage?.completedParts > 0 ? "Continue coding review" : "Suggest improvements"}
         </button>
       )}
       {(submitting || active) && !error && (
         <div role="status" aria-label="Preparing coding suggestions">
           <span className="loading-spinner" aria-hidden="true" />
         </div>
+      )}
+      {wholeCodeReview && coverage && (coverage.eligibleFiles > 0 || completed) && (
+        <>
+          <p>Reviewed {coverage.reviewedFiles} of {coverage.eligibleFiles} eligible JavaScript/TypeScript files.</p>
+          {active && <p>Completed {coverage.completedParts} of {coverage.totalParts} code sections. Batches are paced to reduce API limits.</p>}
+          {coverage.excluded?.length > 0 && (
+            <details>
+              <summary>Files not reviewed ({coverage.excluded.length})</summary>
+              <ul>
+                {coverage.excluded.map(file => (
+                  <li key={file.path}><code>{file.path}</code> — {file.reason.replaceAll("-", " ")}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
       )}
       {error && <p role="alert">{error}</p>}
       {error && active && (
@@ -106,14 +125,14 @@ function ReviewImprovements({ review, disabled }) {
       {result.improvementStatus === "failed" && !error && (
         <p role="alert">{result.improvementMessage || "Suggestions could not finish. Please try again."}</p>
       )}
-      {completed && (
+      {(completed || legacy || result.improvements?.length > 0) && (
         <>
-          {result.improvementFiles?.length > 0 && (
-            <p>Focused review of: {result.improvementFiles.join(", ")}. Other files were not reviewed.</p>
+          {legacy && (
+            <p>These saved suggestions use earlier review rules. Choose Review whole codebase to apply the current file exclusions.</p>
           )}
-          {result.improvementMessage && <p>{result.improvementMessage}</p>}
-          {!result.improvementMessage && result.improvements.length === 0 && (
-            <p>No useful improvements were suggested for the reviewed files.</p>
+          {result.improvementMessage && result.improvementStatus !== "failed" && <p>{result.improvementMessage}</p>}
+          {completed && !result.improvementMessage && result.improvements.length === 0 && (
+            <p>No useful improvements were suggested for the code covered by this review.</p>
           )}
           <ul>
             {result.improvements.map((improvement, index) => (

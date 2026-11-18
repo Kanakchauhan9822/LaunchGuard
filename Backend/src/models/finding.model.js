@@ -28,6 +28,19 @@ const findingSchema = new mongoose.Schema(
       enum: ["security", "dependency", "secret", "code-quality"],
       required: true
     },
+    changeStatus: {
+      type: String,
+      enum: ["new", "existing", "resolved"],
+      default: null
+    },
+    observedCommitSha: {
+      type: String,
+      default: null
+    },
+    rechecked: {
+      type: Boolean,
+      default: true
+    },
     title: {
       type: String,
       required: true,
@@ -40,9 +53,28 @@ const findingSchema = new mongoose.Schema(
       trim: true,
       maxlength: 5000
     },
+    dependency: {
+      type: new mongoose.Schema(
+        {
+          name: { type: String, required: true, maxlength: 214 },
+          version: { type: String, required: true, maxlength: 256 },
+          fixedVersions: {
+            type: [{ type: String, maxlength: 256 }],
+            default: [],
+            validate: values => values.length <= 20
+          }
+        },
+        { _id: false }
+      ),
+      default: null
+    },
     explanation: {
       type: mongoose.Schema.Types.Mixed,
       default: null
+    },
+    explanationShared: {
+      type: Boolean,
+      default: false
     },
     explanationModel: {
       type: String,

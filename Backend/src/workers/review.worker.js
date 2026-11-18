@@ -6,16 +6,19 @@ const Finding = require("../models/finding.model")
 const Project = require("../models/project.model")
 const { createRedisConnection } = require("../config/redis")
 const { reviewProcessing } = require("../config/review")
-const { getReviewSource } = require("../services/repository.service")
+const { getReviewSource, getReviewRepository } = require("../services/repository.service")
 const { scanWithGitleaks } = require("../services/gitleaks.service")
 const { scanWithOsv } = require("../services/osvScanner.service")
 const { scanWithSemgrep } = require("../services/semgrep.service")
 const { scanWithEslint } = require("../services/eslint.service")
-const { reviewJobs } = require("../services/review.service")
-const { selectImprovementFiles } = require("../services/improvementContext.service")
+const { reviewJobs, enqueueReview } = require("../services/review.service")
+const { prepareImprovementBatches } = require("../services/improvementContext.service")
 const { generateImprovements } = require("../services/improvement.service")
+const { readImprovementCache, writeImprovementCache, clearImprovementCache } = require("../services/improvementCache.service")
 const { generateManualTests } = require("../services/manualTest.service")
+const { compareFindings } = require("../services/findingComparison.service")
 const { aiConfig } = require("../config/ai")
+const { lockfileEcosystems } = require("../config/osvScanner")
 
 const scanners = [
   { tool: "gitleaks", stage: "scanning-secrets", scan: scanWithGitleaks },
@@ -44,6 +47,16 @@ function startReviewWorker() {
 
   worker.on("failed", () => {
     console.error("Review job attempt failed; retry or recovery will reconcile its status")
+  })
+
+  worker.on("completed", job => {
+    const kind = Object.keys(reviewJobs).find(kind => reviewJobs[kind].name === job.name)
+
+    if (kind && kind !== "review" && !shutdownController.signal.aborted) {
+      void enqueueReview(job.data.reviewId, kind).catch(() => {
+        console.error("Could not queue the next AI review batch; recovery will retry")
+      })
+    }
   })
 
   return async function stopReviewWorker() {
@@ -112,7 +125,7 @@ async function processReview(job, shutdownSignal) {
         $inc: { [fields.attempts]: 1 }
       },
       { returnDocument: "after", runValidators: true }
-    ).select(`+${fields.attempts} +manualTestDescription`).lean()
+    ).select(`+${fields.attempts} +manualTestDescription +improvementCompletedParts +manualTestCompletedParts`).lean()
 
     if (!review) {
       const existing = await Review.findById(reviewId).select(fields.status).lean()
@@ -162,43 +175,25 @@ async function processReview(job, shutdownSignal) {
   try {
     signal.throwIfAborted()
 
-    if (review.mode !== "entire-project") {
+    if (!["entire-project", "latest-changes"].includes(review.mode)) {
       throw new UnrecoverableError("Unsupported review mode")
     }
 
-    const source = await getReviewSource(review, signal, updateStage)
-    signal.throwIfAborted()
+    let aiPlan = null
 
-    if (kind === "manualTest") {
-      const files = await selectImprovementFiles(source.files, signal)
-      const manualTests = await generateManualTests(files, review.manualTestDescription, signal)
-      signal.throwIfAborted()
-
-      const result = await Review.updateOne(
-        ownedReviewFilter(),
-        {
-          $set: {
-            manualTests,
-            manualTestFiles: files.map(file => file.path),
-            manualTestStatus: "completed",
-            manualTestMessage: files.length === 0
-              ? "No source files were available within the size and secret-check limits. No manual checks were generated."
-              : null,
-            manualTestToken: null,
-            manualTestExpiresAt: null
-          }
-        },
-        { runValidators: true }
-      )
-
-      if (!result.matchedCount) {
-        throw new Error("Manual check processing claim expired")
-      }
-
-      return
+    if (kind !== "review") {
+      await getReviewRepository(review, signal)
+      aiPlan = await readImprovementCache(review, signal)
     }
 
-    if (kind === "improvement") {
+    const source = aiPlan ? null : await getReviewSource(
+      kind === "review" ? review : { ...review, mode: "entire-project" },
+      signal,
+      updateStage
+    )
+    signal.throwIfAborted()
+
+    if (kind !== "review") {
       const project = await Project.findOne({
         _id: review.project,
         owner: review.owner
@@ -208,40 +203,112 @@ async function processReview(job, shutdownSignal) {
         throw new UnrecoverableError("Project not found")
       }
 
-      const files = await selectImprovementFiles(source.files, signal)
-      const improvements = await generateImprovements(files, project.description, signal)
+      if (!aiPlan) {
+        aiPlan = await prepareImprovementBatches(source.files, signal)
+        aiPlan.omitted = source.skipped.filter(file => {
+          return file.reason !== "ignored-directory" && /\.(js|jsx|mjs|cjs|ts|tsx)$/.test(file.path)
+        }).map(file => ({ path: file.path, reason: file.reason }))
+        await writeImprovementCache(review, aiPlan, signal)
+      }
+
+      const plan = aiPlan
+      const parts = plan.batches.flat()
+      const completed = new Set(review[`${kind}CompletedParts`] || [])
+      const batch = plan.batches.find(batch => batch.some(part => !completed.has(part.key)))
+      const pending = batch?.filter(part => !completed.has(part.key)) || []
+      const manual = kind === "manualTest"
+      const generated = manual
+        ? await generateManualTests(pending, review.manualTestDescription, signal, review.manualTests.map(test => test.title))
+        : await generateImprovements(pending, project.description, signal)
       signal.throwIfAborted()
-      const priorities = ["high", "medium", "low"]
-      improvements.sort((first, second) => {
-        return priorities.indexOf(first.priority) - priorities.indexOf(second.priority)
+
+      for (const part of pending) {
+        completed.add(part.key)
+      }
+
+      const unique = new Map()
+
+      const previous = manual ? review.manualTests : review.improvements
+
+      for (const item of [...previous, ...generated]) {
+        if (!manual && plan.excluded.some(file => file.path === item.filePath)) {
+          continue
+        }
+
+        const title = item.title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()
+        const key = manual ? title : JSON.stringify([item.filePath, item.startLine, item.title.trim().toLowerCase()])
+
+        if (!manual || !unique.has(key)) {
+          unique.set(key, item)
+        }
+      }
+
+      const results = [...unique.values()]
+
+      if (!manual) {
+        const priorities = ["high", "medium", "low"]
+        results.sort((first, second) => {
+          return priorities.indexOf(first.priority) - priorities.indexOf(second.priority)
+        })
+      }
+
+      const completedParts = parts.filter(part => completed.has(part.key))
+      const reviewedFiles = [...new Set(parts.map(part => part.path))].filter(filePath => {
+        return parts.filter(part => part.path === filePath).every(part => completed.has(part.key))
       })
+      const omitted = plan.omitted
+      const finished = completedParts.length === parts.length
+      const limit = manual ? aiConfig.maxManualTests : aiConfig.maxImprovements
+      let message = null
+
+      if (parts.length === 0) {
+        message = "No eligible source code was available after file limits and secret checks. No AI review was performed."
+      } else if (results.length >= limit) {
+        message = `Showing up to ${limit} ${manual ? "manual checks" : "suggestions"}. Code review coverage is shown separately.`
+      }
 
       const result = await Review.updateOne(
         ownedReviewFilter(),
         {
           $set: {
-            improvements,
-            improvementFiles: files.map(file => file.path),
-            improvementModel: files.length > 0 ? aiConfig.model : null,
-            improvementStatus: "completed",
-            improvementMessage: files.length === 0
-              ? "No source files were available within the size and secret-check limits. No AI review was performed."
-              : null,
-            improvementToken: null,
-            improvementExpiresAt: null
+            [manual ? "manualTests" : "improvements"]: results.slice(0, limit),
+            [`${kind}Files`]: reviewedFiles,
+            [`${kind}CompletedParts`]: completedParts.map(part => part.key),
+            [`${kind}Version`]: manual ? aiConfig.manualTestVersion : aiConfig.improvementVersion,
+            [`${kind}Coverage`]: {
+              eligibleFiles: plan.eligibleFiles + omitted.length,
+              reviewedFiles: reviewedFiles.length,
+              totalParts: parts.length,
+              completedParts: completedParts.length,
+              excluded: [...plan.excluded, ...omitted.map(file => ({ path: file.path, reason: file.reason }))]
+            },
+            [fields.attempts]: 0,
+            ...(!manual ? { improvementModel: parts.length > 0 ? aiConfig.model : null } : {}),
+            [fields.status]: finished ? "completed" : "pending",
+            [`${kind}Message`]: message,
+            [fields.token]: null,
+            [fields.expires]: null
           }
         },
         { runValidators: true }
       )
 
       if (!result.matchedCount) {
-        throw new Error("Suggestion processing claim expired")
+        throw new Error("AI review processing claim expired")
+      }
+
+      if (finished) {
+        await clearImprovementCache(review)
       }
 
       return
     }
 
     const summary = {
+      scanScope: source.scanScope,
+      fallbackReason: source.fallbackReason,
+      changedFiles: source.changedFiles || [],
+      reviewedFiles: source.files.map(file => file.path),
       repositoryAnalysis: source.inspection,
       coverage: {
         treeEntryCount: source.treeEntryCount,
@@ -256,7 +323,7 @@ async function processReview(job, shutdownSignal) {
       throw new UnrecoverableError("Repository summary exceeds storage limits")
     }
 
-    const findings = []
+    let findings = []
     const scannerOutcomes = []
 
     for (const scanner of scanners) {
@@ -267,9 +334,34 @@ async function processReview(job, shutdownSignal) {
       scannerOutcomes.push(result.outcome)
     }
 
-    const status = scannerOutcomes.every(outcome => outcome.status === "completed")
+    if (review.mode === "latest-changes") {
+      findings = await compareFindings(review, findings, scannerOutcomes, source, signal)
+    }
+
+    const scopeIncomplete = review.mode === "latest-changes" && source.skipped.some(file => {
+      return file.reason !== "ignored-directory" && /\.(js|jsx|mjs|cjs|ts|tsx|vue|svelte)$/.test(file.path)
+    })
+    const applicable = {
+      gitleaks: source.files.length > 0,
+      "osv-scanner": source.files.some(file => lockfileEcosystems.has(file.path.split("/").pop())),
+      semgrep: source.files.some(file => /\.(js|jsx|mjs|cjs|ts|tsx)$/.test(file.path)),
+      eslint: source.files.some(file => /\.(js|jsx|mjs|cjs)$/.test(file.path))
+    }
+    const status = !scopeIncomplete && scannerOutcomes.every(outcome => {
+      return outcome.status === "completed" || (
+        review.mode === "latest-changes" &&
+        outcome.status === "skipped" &&
+        applicable[outcome.tool] === false
+      )
+    })
       ? "completed"
       : "partial"
+
+    const findingCounts = {
+      new: findings.filter(finding => finding.changeStatus === "new").length,
+      existing: findings.filter(finding => finding.changeStatus === "existing").length,
+      resolved: findings.filter(finding => finding.changeStatus === "resolved").length
+    }
 
     await Review.db.transaction(async session => {
       signal.throwIfAborted()
@@ -312,9 +404,10 @@ async function processReview(job, shutdownSignal) {
             status,
             stage: "scans-finished",
             scannerOutcomes,
+            findingCounts,
             resultMessage: status === "completed"
               ? "All configured scanners completed. Review the findings and coverage details."
-              : "Some configured scanners failed or were skipped. Check individual scanner outcomes for details.",
+              : "Some checks failed, were skipped or could not cover all selected source files. Carried findings were retained where checks could not finish.",
             failure: null,
             processingToken: null,
             processingExpiresAt: null
@@ -346,7 +439,7 @@ async function processReview(job, shutdownSignal) {
       improvementMessage = "Reconnect GitHub before trying again."
     }
 
-    if (["AI_HIGH_DEMAND", "AI_RATE_LIMIT", "AI_INVALID_RESPONSE"].includes(error.code)) {
+    if (["AI_HIGH_DEMAND", "AI_RATE_LIMIT", "AI_INVALID_RESPONSE", "AI_RESPONSE_TOO_LONG"].includes(error.code)) {
       improvementMessage = error.publicMessage
     }
 
@@ -381,6 +474,13 @@ async function processReview(job, shutdownSignal) {
 }
 
 function getSafeFailure(error) {
+  if (error.publicMessage && [409, 422].includes(error.status) && error.code !== "GITHUB_RECONNECT") {
+    return {
+      code: "REVIEW_SCOPE_UNAVAILABLE",
+      message: error.publicMessage
+    }
+  }
+
   if (error.code === "GITHUB_RECONNECT" || error.status === 401) {
     return {
       code: "GITHUB_RECONNECT",
