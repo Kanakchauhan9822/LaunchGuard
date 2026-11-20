@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createReview, getReview, listReviews } from "../services/reviews"
 import { githubLoginUrl } from "../services/github"
+import PanelDivider from "./PanelDivider"
 import ReviewFindings from "./ReviewFindings"
 import ReviewImprovements from "./ReviewImprovements"
 import ReviewManualTests from "./ReviewManualTests"
 
 const activeStatuses = new Set(["pending", "queued", "running"])
+
+const statusesWithFindings = new Set(["partial", "completed", "failed"])
 
 function newestReview(current, incoming) {
   if (current && new Date(current.updatedAt) > new Date(incoming.updatedAt)) {
@@ -15,7 +18,41 @@ function newestReview(current, incoming) {
   return incoming
 }
 
-function ReviewControls({ projectId, disabled }) {
+function ReportMetadata({ report }) {
+  return (
+    <>
+      <p>Commit: <code>{report.commitSha}</code></p>
+      {report.mode === "latest-changes" && (
+        <>
+          <p>Compared with: <code>{report.baseCommitSha}</code></p>
+          {["completed", "partial"].includes(report.status) && (
+            <>
+              <p>{report.scanScope === "changed-and-related" ? "Changed files and directly related code" : "Entire-project scan"}</p>
+              {report.fallbackReason && <p>{report.fallbackReason}</p>}
+              <p>
+                New: {report.findingCounts?.new || 0}{" · "}
+                Existing: {report.findingCounts?.existing || 0}{" · "}
+                Resolved: {report.findingCounts?.resolved || 0}
+              </p>
+            </>
+          )}
+        </>
+      )}
+      {report.resultMessage && <p>{report.resultMessage}</p>}
+      {report.failure && <p>{report.failure.message}</p>}
+      <p>Requested: {new Date(report.createdAt).toLocaleString()}</p>
+
+      {report.scannerOutcomes?.some(outcome => outcome.status !== "completed") && (
+        <p>Some checks could not finish or did not apply. These findings may not cover the whole project.</p>
+      )}
+    </>
+  )
+}
+
+function ReviewControls({ projectId, page, disabled, onSuccess }) {
+  const [suggestionsShare, setSuggestionsShare] = useState(50)
+  const [expandedReviewId, setExpandedReviewId] = useState(null)
+  const [reportId, setReportId] = useState("")
   const [reviews, setReviews] = useState([])
   const [nextCursor, setNextCursor] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -175,9 +212,10 @@ function ReviewControls({ projectId, disabled }) {
         return
       }
 
-      setMessage(data.message)
+      onSuccess(data.message)
 
       if (data.review) {
+        setReportId(data.review._id)
         setReviews(current => [data.review, ...current.filter(review => review._id !== data.review._id)])
       }
     } catch (failure) {
@@ -206,8 +244,17 @@ function ReviewControls({ projectId, disabled }) {
     }
   }
 
+  const report = reviews.find(review => review._id === reportId) || reviews[0]
+
+  const hasFindings = statusesWithFindings.has(report?.status)
+  const hasGuidance = ["partial", "completed"].includes(report?.status)
+
+  const combined = page === "dashboard"
+  const history = page === "history"
+
   return (
     <section aria-label="Project reviews">
+      {combined && <div className="actions">
       <button
         type="button"
         onClick={() => requestReview()}
@@ -229,6 +276,7 @@ function ReviewControls({ projectId, disabled }) {
       >
         Refresh reviews
       </button>
+      </div>}
       {loading && <p role="status">Loading review history...</p>}
       {message && <p role="status">{message}</p>}
       {activeReview && <p role="status">Current review: {activeReview.status}</p>}
@@ -236,61 +284,78 @@ function ReviewControls({ projectId, disabled }) {
       {pollError && <p role="alert">Could not update progress: {pollError}</p>}
       {reconnect && <p><a href={githubLoginUrl}>Reconnect GitHub</a></p>}
       {!loading && ready && reviews.length === 0 && <p>No reviews requested yet.</p>}
-      <ul>
-        {reviews.map(review => (
-          <li key={review._id}>
-            <p>
-              {review.mode === "entire-project" ? "Entire project" : "Latest changes"}
-              {" — "}{review.status}
-            </p>
+      {report && (
+        <article className="report">
+          {combined && (
+            <div className="report-summary">
+              <p>
+                {report.mode === "entire-project" ? "Entire project" : "Latest changes"}
+                {" — "}{report.status}
+              </p>
 
-            <p>Commit: <code>{review.commitSha}</code></p>
-            {review.mode === "latest-changes" && (
-              <>
-                <p>Compared with: <code>{review.baseCommitSha}</code></p>
-                {["completed", "partial"].includes(review.status) && (
-                  <>
-                    <p>{review.scanScope === "changed-and-related" ? "Changed files and directly related code" : "Entire-project scan"}</p>
-                    {review.fallbackReason && <p>{review.fallbackReason}</p>}
-                    <p>
-                      New: {review.findingCounts?.new || 0}{" · "}
-                      Existing: {review.findingCounts?.existing || 0}{" · "}
-                      Resolved: {review.findingCounts?.resolved || 0}
-                    </p>
-                  </>
-                )}
-              </>
-            )}
-            {review.stage && <p>Stage: {review.stage}</p>}
-            {review.resultMessage && <p>{review.resultMessage}</p>}
-            {review.failure && <p>{review.failure.message}</p>}
-            <p>Requested: {new Date(review.createdAt).toLocaleString()}</p>
+              {report.branch && <p>Branch <code>{report.branch}</code></p>}
+              <p>Commit <code title={report.commitSha}>{report.commitSha?.slice(0, 8)}</code></p>
+            </div>
+          )}
+          {combined && <details className="report-meta"><summary>Review details</summary>
+            <ReportMetadata report={report} />
 
-            {review.scannerOutcomes?.some(outcome => outcome.status !== "completed") && (
-              <p>Some checks could not finish or did not apply. These findings may not cover the whole project.</p>
+          </details>}
+          {history && <ul className="history-list">
+            {reviews.map(item => (
+              <li key={item._id}>
+                <details
+                  name="past-reviews"
+                  className="report-meta"
+                  onToggle={event => {
+                    if (event.target !== event.currentTarget) return
+                    const open = event.currentTarget.open
+                    setExpandedReviewId(current => open ? item._id : current === item._id ? null : current)
+                  }}
+                >
+                  <summary>{new Date(item.createdAt).toLocaleString()} · {item.mode === "entire-project" ? "Entire project" : "Latest changes"} · {item.status}</summary>
+                  <ReportMetadata report={item} />
+                  {expandedReviewId === item._id && statusesWithFindings.has(item.status) && (
+                    <div className="report-grid">
+                      <ReviewFindings reviewId={item._id} compared={item.mode === "latest-changes"} />
+                    </div>
+                  )}
+                  <a href={'#/projects/' + projectId + '/dashboard'} onClick={() => setReportId(item._id)}>Open report →</a>
+                </details>
+              </li>
+            ))}
+          </ul>}
+          <div
+            className={combined ? "report-grid report-split" : "report-grid report-single"}
+            style={combined ? { "--list-track": suggestionsShare + "fr", "--detail-track": (100 - suggestionsShare) + "fr" } : undefined}
+          >
+            {hasFindings && (combined || page === "findings" || page === "solutions") && (
+              <ReviewFindings solutions={page === "solutions"} key={report._id} reviewId={report._id} compared={report.mode === "latest-changes"} />
             )}
-
-            {["partial", "completed", "failed"].includes(review.status) && (
-              <ReviewFindings key={review._id} reviewId={review._id} compared={review.mode === "latest-changes"} />
-            )}
-            {["partial", "completed"].includes(review.status) && (
+            {hasGuidance && (combined || page === "coding") && (
               <ReviewImprovements
-                key={`${review._id}-${review.improvementStatus || "new"}`}
-                review={review}
+                key={`${report._id}-${report.improvementStatus || "new"}`}
+                review={report}
                 disabled={disabled || reconnect}
               />
             )}
-            {["partial", "completed"].includes(review.status) && (
+            {combined && hasGuidance && (
+              <PanelDivider label="Resize coding suggestions" controls="suggestions" share={suggestionsShare} onResize={setSuggestionsShare} />
+            )}
+            {hasGuidance && (combined || page === "checks") && (
               <ReviewManualTests
-                key={`manual-tests-${review._id}`}
-                reviewId={review._id}
+                key={`manual-tests-${report._id}`}
+                reviewId={report._id}
                 disabled={disabled || reconnect}
               />
             )}
-          </li>
-        ))}
-      </ul>
-      {nextCursor && (
+            {!combined && !history && !(page === "findings" || page === "solutions" ? hasFindings : hasGuidance) && (
+              <p>This feature is unavailable for this {report.status} review.</p>
+            )}
+          </div>
+        </article>
+      )}
+      {history && nextCursor && (
         <button
           type="button"
           onClick={() => loadHistory(nextCursor)}

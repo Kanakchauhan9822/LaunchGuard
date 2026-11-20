@@ -6,6 +6,7 @@ const activeStatuses = new Set(["pending", "queued", "running"])
 function ReviewImprovements({ review, disabled }) {
   const [result, setResult] = useState(review)
   const [submitting, setSubmitting] = useState(false)
+  const [requestedHere, setRequestedHere] = useState(false)
   const [error, setError] = useState("")
   const [pollVersion, setPollVersion] = useState(0)
   const request = useRef(null)
@@ -71,6 +72,7 @@ function ReviewImprovements({ review, disabled }) {
 
       if (!controller.signal.aborted) {
         setResult(data.review)
+        setRequestedHere(true)
       }
     } catch (failure) {
       if (!controller.signal.aborted) {
@@ -85,8 +87,8 @@ function ReviewImprovements({ review, disabled }) {
   }
 
   return (
-    <section aria-label="Coding suggestions">
-      <h4>Coding suggestions</h4>
+    <section id="suggestions" aria-label="Coding suggestions">
+      <h3>Coding suggestions</h3>
       {!completed && !active && (
         <button type="button" onClick={suggestImprovements} disabled={disabled || submitting}>
           {legacy ? "Review whole codebase" : coverage?.completedParts > 0 ? "Continue coding review" : "Suggest improvements"}
@@ -99,7 +101,7 @@ function ReviewImprovements({ review, disabled }) {
       )}
       {wholeCodeReview && coverage && (coverage.eligibleFiles > 0 || completed) && (
         <>
-          <p>Reviewed {coverage.reviewedFiles} of {coverage.eligibleFiles} eligible JavaScript/TypeScript files.</p>
+          <p>{coverage.eligibleFiles > 0 && <progress aria-label="Coding suggestion coverage" value={coverage.reviewedFiles} max={coverage.eligibleFiles} />}{completed ? "Your coding review is complete." : `Reviewed ${coverage.reviewedFiles} of ${coverage.eligibleFiles} eligible files.`}</p>
           {active && <p>Completed {coverage.completedParts} of {coverage.totalParts} code sections. Batches are paced to reduce API limits.</p>}
           {coverage.excluded?.length > 0 && (
             <details>
@@ -122,7 +124,7 @@ function ReviewImprovements({ review, disabled }) {
           Check again
         </button>
       )}
-      {result.improvementStatus === "failed" && !error && (
+      {result.improvementStatus === "failed" && !error && (requestedHere || !result.improvementMessage?.includes("AI usage limit")) && (
         <p role="alert">{result.improvementMessage || "Suggestions could not finish. Please try again."}</p>
       )}
       {(completed || legacy || result.improvements?.length > 0) && (
