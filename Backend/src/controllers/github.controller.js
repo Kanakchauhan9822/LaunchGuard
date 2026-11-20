@@ -46,6 +46,7 @@ function githubLogin(req, res) {
   const githubUrl = new URL("https://github.com/login/oauth/authorize")
   githubUrl.searchParams.set("client_id", process.env.GITHUB_CLIENT_ID)
   githubUrl.searchParams.set("redirect_uri", process.env.GITHUB_REDIRECT_URI)
+  githubUrl.searchParams.set("prompt", "select_account")
   githubUrl.searchParams.set("state", state)
   githubUrl.searchParams.set("code_challenge", codeChallenge)
   githubUrl.searchParams.set("code_challenge_method", "S256")

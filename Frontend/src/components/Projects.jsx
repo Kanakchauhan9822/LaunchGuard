@@ -28,7 +28,7 @@ function projectUrl(id, page = 'dashboard') {
   return '#/projects/' + encodeURIComponent(id) + '/' + page
 }
 
-async function fetchProjectPage(cursor, signal) {
+async function fetchProjectPage(cursor, signal, allProjects = false) {
   if (cursor) {
     return apiRequest('/projects?cursor=' + encodeURIComponent(cursor), { signal })
   }
@@ -36,7 +36,7 @@ async function fetchProjectPage(cursor, signal) {
   const targetId = readPage().slice(2).split('/')[1]
   let data = await apiRequest('/projects', { signal })
   const loaded = [...data.projects]
-  while (targetId && data.nextCursor && !loaded.some(item => item._id === targetId)) {
+  while (data.nextCursor && (allProjects || (targetId && !loaded.some(item => item._id === targetId)))) {
     data = await apiRequest('/projects?cursor=' + encodeURIComponent(data.nextCursor), { signal })
     loaded.push(...data.projects)
   }
@@ -113,6 +113,17 @@ function ProjectForm({ repository, disabled, onCreated, onSavingChange }) {
   )
 }
 
+function ProjectHistory({ project, disabled, onSuccess }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <details className="project-history" onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary><h2>{project.repositoryName.split('/').pop()}</h2></summary>
+      {open && <ReviewControls projectId={project._id} page="history" disabled={disabled} onSuccess={onSuccess} />}
+    </details>
+  )
+}
+
 function Projects({ children, sidebar, selectedRepository, disabled, onSavingChange, onSuccess }) {
   const addDialog = useRef(null)
   const removeDialog = useRef(null)
@@ -120,6 +131,7 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
   const [, activeId, requestedPage] = hash.slice(2).split('/')
   const page = Object.hasOwn(pages, requestedPage) ? requestedPage : 'dashboard'
   const dashboard = page === 'dashboard'
+  const history = page === 'history'
   const [projects, setProjects] = useState([])
   const [nextCursor, setNextCursor] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -131,7 +143,7 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
 
     async function loadProjects() {
       try {
-        const data = await fetchProjectPage(null, controller.signal)
+        const data = await fetchProjectPage(null, controller.signal, history)
         setProjects(data.projects)
         setNextCursor(data.nextCursor)
       } catch (failure) {
@@ -151,14 +163,14 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
     loadProjects()
 
     return () => controller.abort()
-  }, [])
+  }, [history])
 
   async function refreshProjects(cursor = null) {
     setLoading(true)
     setError('')
 
     try {
-      const data = await fetchProjectPage(cursor)
+      const data = await fetchProjectPage(cursor, undefined, history)
 
       setProjects(current => {
         if (!cursor) {
@@ -213,7 +225,6 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
     onSuccess('Project saved successfully')
   }
 
-  const HistoryContainer = page === 'history' ? 'details' : 'div'
   const project = activeId ? projects.find(item => item._id === activeId) : projects[0]
 
   useEffect(() => {
@@ -269,6 +280,21 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
       {sidebar && createPortal(<>
         <Brand href={project ? projectUrl(project._id) : "#/projects"} label="LaunchGuard dashboard" />
         <div className="project-tools">
+        {project && (
+          <nav aria-label="Project navigation">
+            {Object.entries(pages).filter(([slug]) => slug !== 'solutions').map(([slug, label]) => (
+              <a key={slug} href={projectUrl(project._id, slug)} aria-current={page === slug ? 'page' : undefined}>{label}</a>
+            ))}
+          </nav>
+        )}
+        <div className="project-actions">
+          <button type="button" onClick={() => addDialog.current.showModal()}>+ Add project</button>
+          <button type="button" className="refresh-projects" aria-label="Refresh projects" title="Refresh projects"
+            onClick={() => refreshProjects()} disabled={disabled || loading}>↻</button>
+        </div>
+        <button type="button" onClick={() => removeDialog.current.showModal()} disabled={!projects.length || disabled || loading || signedOut}>
+          Remove project
+        </button>
         <nav className="saved-projects" aria-labelledby="saved-projects-title">
           <strong id="saved-projects-title">Saved projects</strong>
           {projects.map(item => (
@@ -282,21 +308,7 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
             </button>
           )}
         </nav>
-        <div className="project-actions">
-          <button type="button" onClick={() => addDialog.current.showModal()}>+ Add project</button>
-          <button type="button" className="refresh-projects" aria-label="Refresh projects" title="Refresh projects"
-            onClick={() => refreshProjects()} disabled={disabled || loading}>↻</button>
-        </div>
-        <button type="button" onClick={() => removeDialog.current.showModal()} disabled={!projects.length || disabled || loading || signedOut}>
-          Remove project
-        </button>
-      {project && (
-        <nav aria-label="Project navigation">
-          {Object.entries(pages).filter(([slug]) => slug !== 'solutions').map(([slug, label]) => (
-            <a key={slug} href={projectUrl(project._id, slug)} aria-current={page === slug ? 'page' : undefined}>{label}</a>
-          ))}
-        </nav>
-      )}
+
 
       </div></>, sidebar)}
       {loading && <p role="status">Loading projects...</p>}
@@ -313,11 +325,10 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
       ) : (
         <h1 className="feature-title">{pages[page]}</h1>
       )}
-      {project && (
-        <HistoryContainer key={project._id} className={page === 'history' ? 'project-history' : undefined}>
-          {page === 'history' && <summary><h2>{project.repositoryName.split('/').pop()}</h2></summary>}
-          <ReviewControls onSuccess={onSuccess} projectId={project._id} page={page} disabled={disabled || loading || signedOut} />
-        </HistoryContainer>
+      {history ? projects.map(item => (
+        <ProjectHistory key={item._id} project={item} disabled={disabled || loading || signedOut} onSuccess={onSuccess} />
+      )) : project && (
+        <ReviewControls key={project._id} onSuccess={onSuccess} projectId={project._id} page={page} disabled={disabled || loading || signedOut} />
       )}
     </section>
   )
