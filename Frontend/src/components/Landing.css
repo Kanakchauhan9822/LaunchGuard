@@ -38,7 +38,17 @@
 }
 .landing :is(.primary, .nav-login, .hero-actions .quiet-link):active { transform: translateY(1px); }
 .hero { text-align: center; padding: clamp(2.5rem, 4vw, 4rem) 0 1.5rem; }
-.hero-journey { display: block; width: min(100%, 1180px); height: auto; margin: clamp(1.3rem, 2.5vw, 2.2rem) auto 0; border-radius: .9rem; }
+.hero-journey {
+  display: block;
+  width: min(100%, 1180px);
+  height: auto;
+  margin: clamp(1.3rem, 2.5vw, 2.2rem) auto 0;
+  border-radius: .9rem;
+  mask-image:
+    linear-gradient(to right, transparent, black 6%, black 94%, transparent),
+    linear-gradient(to bottom, transparent, black 12%, black 88%, transparent);
+  mask-composite: intersect;
+}
 .landing :is(h1, h2, h3) { font-family: "EB Garamond", Georgia, serif; font-weight: 400; }
 .hero h1 em { font-weight: 400; }
 .hero h1 { font-size: clamp(3.25rem, 6.7vw, 6.5rem); line-height: 1.1; font-weight: 400; letter-spacing: -.045em; }
