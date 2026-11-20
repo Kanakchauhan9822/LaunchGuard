@@ -7,6 +7,7 @@ function ReviewManualTests({ reviewId, disabled }) {
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [requestedHere, setRequestedHere] = useState(false)
   const [error, setError] = useState("")
   const [refreshVersion, setRefreshVersion] = useState(0)
   const request = useRef(null)
@@ -85,6 +86,7 @@ function ReviewManualTests({ reviewId, disabled }) {
 
       if (!controller.signal.aborted) {
         setResult(data.review)
+        if (!testId) setRequestedHere(true)
 
         if (activeStatuses.has(data.review.manualTestStatus)) {
           setRefreshVersion(current => current + 1)
@@ -103,8 +105,8 @@ function ReviewManualTests({ reviewId, disabled }) {
   }
 
   return (
-    <section aria-label="Manual checks">
-      <h4>Manual checks</h4>
+    <section id="checks" aria-label="Manual checks">
+      <h3>Manual checks</h3>
       {!completed && !active && result && (
         <button type="button" onClick={() => save()} disabled={disabled || loading || saving}>
           {buttonLabel}
@@ -117,7 +119,8 @@ function ReviewManualTests({ reviewId, disabled }) {
       )}
       {coverage?.eligibleFiles > 0 && (
         <p role="status">
-          Manual checks reviewed {coverage.reviewedFiles} of {coverage.eligibleFiles} eligible JavaScript/TypeScript files.
+          <progress aria-label="Manual check coverage" value={coverage.reviewedFiles} max={coverage.eligibleFiles} />
+          {completed ? "All manual tests generated successfully." : `Manual checks reviewed ${coverage.reviewedFiles} of ${coverage.eligibleFiles} eligible files.`}
           {active && ` Processed ${coverage.completedParts} of ${coverage.totalParts} code sections.`}
         </p>
       )}
@@ -141,42 +144,36 @@ function ReviewManualTests({ reviewId, disabled }) {
           </button>
         </>
       )}
-      {result?.manualTestStatus === "failed" && !error && (
+      {result?.manualTestStatus === "failed" && !error && (requestedHere || !result.manualTestMessage?.includes("AI usage limit")) && (
         <p role="alert">{result.manualTestMessage || "Manual checks could not be generated. Please try again."}</p>
       )}
       {(completed || result?.manualTests?.length > 0) && (
         <>
-          <details>
-            <summary>Show saved manual checks</summary>
-            {result.manualTestFiles?.length > 0 && (
-              <p>Checks based on your description and reviewed files: {result.manualTestFiles.join(", ")}.</p>
-            )}
-            {result.manualTestMessage && <p>{result.manualTestMessage}</p>}
-            {!result.manualTestMessage && result.manualTests.length === 0 && (
-              <p>No useful manual checks could be suggested from the available context.</p>
-            )}
-            <ul>
-              {result.manualTests.map(test => (
-                <li key={test._id}>
-                  <details>
-                    <summary>{test.title}{test.checkedAt ? " — Checked" : ""}</summary>
-                    {test.preparation && <p><strong>Before you start:</strong> {test.preparation}</p>}
-                    <ol>
-                      {test.steps.map((step, index) => <li key={index}>{step}</li>)}
-                    </ol>
-                    <p><strong>Expected result:</strong> {test.expectedResult}</p>
-                    <button
-                      type="button"
-                      onClick={() => save(test._id)}
-                      disabled={disabled || saving || loading || active || result.manualTestStatus !== "completed" || Boolean(test.checkedAt)}
-                    >
-                      {test.checkedAt ? "Checked" : "Mark as checked"}
-                    </button>
-                  </details>
-                </li>
-              ))}
-            </ul>
-          </details>
+          {result.manualTestMessage && result.manualTestStatus !== "failed" && result.manualTestMessage !== error && <p>{result.manualTestMessage}</p>}
+          {!result.manualTestMessage && result.manualTests.length === 0 && (
+            <p>No useful manual checks could be suggested from the available context.</p>
+          )}
+          <ul>
+            {result.manualTests.map(test => (
+              <li key={test._id}>
+                <details>
+                  <summary>{test.title}{test.checkedAt ? " — Checked" : ""}</summary>
+                  {test.preparation && <p><strong>Before you start:</strong> {test.preparation}</p>}
+                  <ol>
+                    {test.steps.map((step, index) => <li key={index}>{step}</li>)}
+                  </ol>
+                  <p><strong>Expected result:</strong> {test.expectedResult}</p>
+                  <button
+                    type="button"
+                    onClick={() => save(test._id)}
+                    disabled={disabled || saving || loading || active || result.manualTestStatus !== "completed" || Boolean(test.checkedAt)}
+                  >
+                    {test.checkedAt ? "Checked" : "Mark as checked"}
+                  </button>
+                </details>
+              </li>
+            ))}
+          </ul>
           <p>For updated checks, push your code changes and run Review Entire Project again.</p>
         </>
       )}

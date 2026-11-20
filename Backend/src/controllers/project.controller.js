@@ -121,7 +121,25 @@ async function listProjects(req, res, next) {
   }
 }
 
+async function removeProject(req, res, next) {
+  const { projectId } = req.params
+  if (!/^[a-f0-9]{24}$/i.test(projectId)) {
+    return res.status(400).json({ message: "Invalid project ID" })
+  }
+
+  try {
+    const result = await Project.deleteOne({ _id: projectId, owner: req.user._id })
+    if (!result.deletedCount) {
+      return res.status(404).json({ message: "Project was not found" })
+    }
+    return res.sendStatus(204)
+  } catch (error) {
+    next(error)
+  }
+}
+
 module.exports = {
+  removeProject,
   createProject,
   listProjects
 }
