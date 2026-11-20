@@ -3,7 +3,6 @@ WORKDIR /frontend
 COPY Frontend/package*.json ./
 RUN npm ci
 COPY Frontend/src ./src
-COPY Frontend/public ./public
 COPY Frontend/index.html Frontend/vite.config.js ./
 RUN npm run build
 
