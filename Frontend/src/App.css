@@ -209,6 +209,7 @@ footer { margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 1rem;
 .workspace-bar a[aria-current=page], .saved-projects a[aria-current=true] { background: var(--selected); box-shadow: inset 2px 0 #e2dfd9; }
 .report-single { grid-template-columns: minmax(0,1fr); }
 .project-history { border: 1px solid var(--line); border-radius: .8rem; padding: 1rem; }
+.project-history + .project-history { margin-block-start: 1rem; }
 .project-history > summary > h2 { display: inline; margin: 0; }
 .project-history[open] > summary { padding-bottom: .75rem; border-bottom: 1px solid var(--line); }
 .project-history .history-list > li:last-child { border-bottom: 0; }
