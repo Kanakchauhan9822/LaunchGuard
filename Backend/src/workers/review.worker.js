@@ -340,8 +340,11 @@ async function processReview(job, shutdownSignal) {
       findings = await compareFindings(review, findings, scannerOutcomes, source, signal)
     }
 
-    const scopeIncomplete = review.mode === "latest-changes" && source.skipped.some(file => {
-      return file.reason !== "ignored-directory" && /\.(js|jsx|mjs|cjs|ts|tsx|vue|svelte)$/.test(file.path)
+    const scopeIncomplete = source.skipped.some(file => {
+      return file.reason !== "ignored-directory" && (
+        /\.(js|jsx|mjs|cjs|ts|tsx|vue|svelte)$/.test(file.path) ||
+        lockfileEcosystems.has(file.path.split("/").pop())
+      )
     })
     const applicable = {
       gitleaks: source.files.length > 0,
@@ -351,7 +354,6 @@ async function processReview(job, shutdownSignal) {
     }
     const status = !scopeIncomplete && scannerOutcomes.every(outcome => {
       return outcome.status === "completed" || (
-        review.mode === "latest-changes" &&
         outcome.status === "skipped" &&
         applicable[outcome.tool] === false
       )
@@ -408,7 +410,7 @@ async function processReview(job, shutdownSignal) {
             scannerOutcomes,
             findingCounts,
             resultMessage: status === "completed"
-              ? "All configured scanners completed. Review the findings and coverage details."
+              ? "All applicable checks completed. Review the findings and coverage details."
               : "Some checks failed, were skipped or could not cover all selected source files. Carried findings were retained where checks could not finish.",
             failure: null,
             processingToken: null,

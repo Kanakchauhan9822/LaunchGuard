@@ -43,7 +43,7 @@ function ReportMetadata({ report }) {
       {report.failure && <p>{report.failure.message}</p>}
       <p>Requested: {new Date(report.createdAt).toLocaleString()}</p>
 
-      {report.scannerOutcomes?.some(outcome => outcome.status !== "completed") && (
+      {report.status !== "completed" && report.scannerOutcomes?.some(outcome => outcome.status !== "completed") && (
         <p>Some checks could not finish or did not apply. These findings may not cover the whole project.</p>
       )}
     </>
