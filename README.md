@@ -6,8 +6,6 @@
 
 Connect a repository, describe what you’re building, and choose a full review or a review of the latest changes. Each report is tied to a Git commit, so you can see which version was checked, where a problem was reported, and what changed since your last completed review.
 
-![LaunchGuard sample project dashboard](Frontend/src/assets/workspace-dashboard.webp)
-
 ## Features
 
 - **Review an entire project or its latest changes.** A full review scans eligible files at a specific commit. A latest-changes review checks changed files, their direct local dependencies and callers, and relevant package files. If the impact cannot be mapped reliably, LaunchGuard falls back to a full review and labels it in the report.
