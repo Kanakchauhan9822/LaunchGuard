@@ -57,6 +57,7 @@
 .hero-actions { margin-top: 1.85rem; justify-content: center; flex-wrap: wrap; }
 .quiet-link { color: #f1f0ec; text-decoration-color: #777; }
 .preview-track { position: relative; }
+.preview-stage > .preview-logo { display: none; }
 .preview-track > #product { position: absolute; top: min(31vw, 394px); }
 .dashboard-preview { width: min(100%, 1180px); margin: auto; border: 1px solid #43423e; border-radius: 1rem; overflow: hidden; background: #101010; box-shadow: 0 15px 60px #0005; }
 .preview-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .65rem; padding: .8rem 1rem; border-bottom: 1px solid #383835; }
@@ -145,6 +146,16 @@
     grid-area: 1 / 1;
     margin: 0 auto;
     clip-path: inset(0 0 var(--preview-inset, 0%) 0 round .9rem);
+  }
+  .motion-ready .preview-stage > .preview-logo {
+    display: block;
+    position: absolute;
+    top: min(50%, 40svh);
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(70%, 34rem);
+    opacity: var(--logo-opacity, 0);
+    pointer-events: none;
   }
   .motion-ready .hero-journey {
     opacity: calc(1 - var(--dashboard-visible, 0));

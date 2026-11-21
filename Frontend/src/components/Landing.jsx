@@ -109,6 +109,7 @@ export default function Landing({ loading, error, message }) {
         const travel = track.offsetHeight - stage.offsetHeight
         const progress = clamp((pinTop - track.getBoundingClientRect().top) / Math.max(1, travel))
         const open = clamp((Math.abs(2 * progress - 1) - .02) / .98)
+        track.style.setProperty('--logo-opacity', clamp((.55 - open) / .3))
         track.style.setProperty('--preview-inset', (100 * (1 - open * open * (3 - 2 * open))) + '%')
         track.style.setProperty('--dashboard-visible', progress >= .5 ? 1 : 0)
         const distance = Math.max(0, Math.min(offsets.at(-1), -road.getBoundingClientRect().top))
@@ -217,6 +218,7 @@ export default function Landing({ loading, error, message }) {
         <div className="preview-track">
           <span id="product" aria-hidden="true" />
           <div className="preview-stage">
+          <span className="brand preview-logo" aria-hidden="true" />
           <img className="hero-journey" src={reviewJourney} width="2172" height="724" fetchPriority="high" alt="A developer writes code on the left. It passes through the LaunchGuard review gate in the center before reaching a live website on the right." />
         <section className="dashboard-preview" aria-label="Explore the LaunchGuard dashboard">
           <div className="preview-toolbar">
