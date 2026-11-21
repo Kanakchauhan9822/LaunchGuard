@@ -18,6 +18,20 @@ COPY Backend/package*.json ./
 RUN npm ci --omit=dev
 COPY Backend/server.js ./
 COPY Backend/src ./src
+RUN /opt/semgrep/bin/python - <<'PY'
+from pathlib import Path
+from ruamel.yaml import YAML
+
+yaml = YAML(typ="safe", pure=True)
+rules = []
+for source in sorted(Path("src/config/semgrep-rules").rglob("*.yml")):
+    rules.extend(yaml.load(source)["rules"])
+if not rules or len({rule["id"] for rule in rules}) != len(rules):
+    raise ValueError("Expected a nonempty Semgrep bundle with unique rule IDs")
+with Path("/app/semgrep-rules.yml").open("w") as bundle:
+    yaml.dump({"rules": rules}, bundle)
+PY
+ENV SEMGREP_RULES_PATH=/app/semgrep-rules.yml
 COPY --from=frontend /frontend/dist ./public
 USER node
 EXPOSE 3000

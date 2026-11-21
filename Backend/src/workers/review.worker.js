@@ -328,7 +328,9 @@ async function processReview(job, shutdownSignal) {
 
     for (const scanner of scanners) {
       await updateStage(scanner.stage)
+      console.info("Review scanner started", { reviewId, tool: scanner.tool })
       const result = await scanner.scan(source.files, signal)
+      console.info("Review scanner finished", { reviewId, tool: scanner.tool, status: result.outcome.status })
       signal.throwIfAborted()
       findings.push(...result.findings)
       scannerOutcomes.push(result.outcome)

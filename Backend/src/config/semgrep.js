@@ -6,8 +6,8 @@ const semgrepConfig = {
       ? "C:\\Users\\kanak\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\semgrep.exe"
       : "semgrep"
   ),
-  rulesPath: path.join(__dirname, "semgrep-rules"),
-  timeoutMs: 60000,
+  rulesPath: process.env.SEMGREP_RULES_PATH || path.join(__dirname, "semgrep-rules"),
+  timeoutMs: process.env.RENDER === "true" ? 150000 : 60000,
   maxOutputBytes: 4 * 1024 * 1024,
   maxFindings: 1000
 }

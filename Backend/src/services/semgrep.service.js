@@ -64,8 +64,8 @@ async function runSemgrep(workspace, sourceDirectory, signal) {
     "--no-rewrite-rule-ids",
     "--strict",
     "--jobs", "1",
-    "--timeout", "10",
-    "--max-memory", "256",
+    "--timeout", process.env.RENDER === "true" ? "40" : "10",
+    "--max-memory", process.env.RENDER === "true" ? "160" : "256",
     sourceDirectory
   ]
 

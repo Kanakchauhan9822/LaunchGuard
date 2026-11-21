@@ -4,7 +4,10 @@ function runScanner(name, config, args, directory, signal) {
   signal?.throwIfAborted()
 
   return new Promise((resolve, reject) => {
-    const child = spawn(config.executable, args, {
+    const renderLinux = process.env.RENDER === "true" && process.platform === "linux"
+    const executable = renderLinux ? "/usr/bin/nice" : config.executable
+    const scannerArgs = renderLinux ? ["-n", "10", config.executable, ...args] : args
+    const child = spawn(executable, scannerArgs, {
       cwd: directory,
       shell: false,
       windowsHide: true,
@@ -87,6 +90,12 @@ function scannerEnvironment(directory) {
     TEMP: directory,
     TMP: directory,
     GOMAXPROCS: "2"
+  }
+
+  if (process.env.RENDER === "true") {
+    env.GOMAXPROCS = "1"
+    env.GOMEMLIMIT = "112MiB"
+    env.NODE_OPTIONS = "--max-old-space-size=128"
   }
 
   for (const name of ["PATH", "Path", "SystemRoot", "SYSTEMROOT", "WINDIR", "PATHEXT"]) {
