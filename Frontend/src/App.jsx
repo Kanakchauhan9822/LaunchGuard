@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { githubLoginUrl, githubRequest } from './services/github'
+import { cleanPageUrl } from './navigation'
 import Landing from './components/Landing'
 import Projects from './components/Projects'
 import './App.css'
@@ -46,9 +47,7 @@ function App() {
 
   useEffect(() => {
     const controller = new AbortController()
-    const url = new URL(window.location.href)
-    url.searchParams.delete('github')
-    window.history.replaceState(null, '', url)
+    cleanPageUrl()
 
     async function loadConnection() {
       try {
@@ -63,7 +62,10 @@ function App() {
         if (data.selectionUnavailable) setMessage('Your saved repository is no longer accessible. Choose another repository or update GitHub access.')
       } catch (failure) {
         if (controller.signal.aborted) return
-        if (failure.status === 401) setUser(null)
+        if (failure.status === 401) {
+          window.history.replaceState(null, '', '/')
+          setUser(null)
+        }
         else setError(failure.message)
         setReconnect(failure.code === 'GITHUB_RECONNECT')
       } finally {
@@ -141,6 +143,7 @@ function App() {
     setError('')
     try {
       await githubRequest('/logout', { method: 'POST' })
+      window.history.replaceState(null, '', '/')
       setUser(null)
       setRepositories([])
       setSelectedRepository(null)

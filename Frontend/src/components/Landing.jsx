@@ -9,8 +9,8 @@ import checksPreview from '../assets/workspace-checks.webp'
 import historyPreview from '../assets/workspace-history.webp'
 import './Landing.css'
 
-export function Brand({ href = "#top", label = "LaunchGuard home" }) {
-  return <a href={href} aria-label={label}><span className="brand" aria-hidden="true" /></a>
+export function Brand({ href = "#top", label = "LaunchGuard home", onClick }) {
+  return <a href={href} onClick={onClick} aria-label={label}><span className="brand" aria-hidden="true" /></a>
 }
 
 const reviewSteps = [
@@ -184,7 +184,14 @@ export default function Landing({ loading, error, message }) {
   }, [])
 
   return (
-    <main ref={landing} className="landing" id="top">
+    <main ref={landing} className="landing" id="top" onClick={event => {
+      const anchor = event.target.closest('a[href^="#"]')
+      const section = anchor && document.getElementById(anchor.hash.slice(1))
+      if (section) {
+        event.preventDefault()
+        section.scrollIntoView()
+      }
+    }}>
       <header className="mast">
           <Brand />
           <nav aria-label="Main navigation">

@@ -4,36 +4,14 @@ import { apiRequest } from '../services/api'
 import { githubLoginUrl } from '../services/github'
 import { Brand } from './Landing'
 import ReviewControls from './ReviewControls'
-
-
-const pages = {
-  dashboard: 'Dashboard',
-  findings: 'Security findings',
-  coding: 'Coding suggestions',
-  solutions: 'Solutions',
-  checks: 'Manual checks',
-  history: 'Review history'
-}
-
-function subscribeToPage(listener) {
-  window.addEventListener('hashchange', listener)
-  return () => window.removeEventListener('hashchange', listener)
-}
-
-function readPage() {
-  return window.location.hash
-}
-
-function projectUrl(id, page = 'dashboard') {
-  return '#/projects/' + encodeURIComponent(id) + '/' + page
-}
+import { pages, openPage, pagePath, readPage, subscribeToPage } from '../navigation'
 
 async function fetchProjectPage(cursor, signal, allProjects = false) {
   if (cursor) {
     return apiRequest('/projects?cursor=' + encodeURIComponent(cursor), { signal })
   }
 
-  const targetId = readPage().slice(2).split('/')[1]
+  const targetId = window.history.state?.projectId
   let data = await apiRequest('/projects', { signal })
   const loaded = [...data.projects]
   while (data.nextCursor && (allProjects || (targetId && !loaded.some(item => item._id === targetId)))) {
@@ -127,8 +105,8 @@ function ProjectHistory({ project, disabled, onSuccess }) {
 function Projects({ children, sidebar, selectedRepository, disabled, onSavingChange, onSuccess }) {
   const addDialog = useRef(null)
   const removeDialog = useRef(null)
-  const hash = useSyncExternalStore(subscribeToPage, readPage)
-  const [, activeId, requestedPage] = hash.slice(2).split('/')
+  const route = useSyncExternalStore(subscribeToPage, readPage)
+  const [requestedPage, activeId, reviewId] = route.split('|')
   const page = Object.hasOwn(pages, requestedPage) ? requestedPage : 'dashboard'
   const dashboard = page === 'dashboard'
   const history = page === 'history'
@@ -206,7 +184,7 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
       const remaining = projects.filter(saved => saved._id !== item._id)
       setProjects(remaining)
       if (project?._id === item._id) {
-        window.location.assign(remaining.length ? projectUrl(remaining[0]._id) : '#')
+        openPage(remaining[0]?._id)
       }
       onSuccess(item.repositoryName + ' removed from your dashboard')
       if (!remaining.length && nextCursor) await refreshProjects()
@@ -221,11 +199,11 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
   function projectCreated(project) {
     addDialog.current.close()
     setProjects(current => [project, ...current.filter(item => item._id !== project._id)])
-    window.location.hash = projectUrl(project._id)
+    openPage(project._id)
     onSuccess('Project saved successfully')
   }
 
-  const project = activeId ? projects.find(item => item._id === activeId) : projects[0]
+  const project = projects.find(item => item._id === activeId) || projects[0]
 
   useEffect(() => {
     if (project) {
@@ -278,12 +256,12 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
         {error && <p role="alert">{error}</p>}
       </dialog>
       {sidebar && createPortal(<>
-        <Brand href={project ? projectUrl(project._id) : "#/projects"} label="LaunchGuard dashboard" />
+        <Brand href="/" onClick={event => openPage(project?._id, "dashboard", "", event)} label="LaunchGuard dashboard" />
         <div className="project-tools">
         {project && (
           <nav aria-label="Project navigation">
             {Object.entries(pages).filter(([slug]) => slug !== 'solutions').map(([slug, label]) => (
-              <a key={slug} href={projectUrl(project._id, slug)} aria-current={page === slug ? 'page' : undefined}>{label}</a>
+              <a key={slug} href={pagePath(slug)} onClick={event => openPage(project._id, slug, '', event)} aria-current={page === slug ? 'page' : undefined}>{label}</a>
             ))}
           </nav>
         )}
@@ -298,7 +276,7 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
         <nav className="saved-projects" aria-labelledby="saved-projects-title">
           <strong id="saved-projects-title">Saved projects</strong>
           {projects.map(item => (
-            <a key={item._id} href={projectUrl(item._id, page === "history" ? "history" : "dashboard")} aria-current={item._id === project?._id ? 'true' : undefined}>
+            <a key={item._id} href={history ? "/history" : "/"} onClick={event => openPage(item._id, history ? "history" : "dashboard", "", event)} aria-current={item._id === project?._id ? 'true' : undefined}>
               {item.repositoryName.split('/').pop()}
             </a>
           ))}
@@ -315,7 +293,6 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
       {error && <p role="alert">{error}</p>}
       {signedOut && <p><a href={githubLoginUrl}>Sign in again</a></p>}
 
-      {activeId && !project && !loading && projects.length > 0 && <a href={projectUrl(projects[0]._id)}>Return to saved projects</a>}
       {dashboard ? (
         <header className="project-hero">
           <span className="eyebrow">Project dashboard</span>
@@ -328,7 +305,7 @@ function Projects({ children, sidebar, selectedRepository, disabled, onSavingCha
       {history ? projects.map(item => (
         <ProjectHistory key={item._id} project={item} disabled={disabled || loading || signedOut} onSuccess={onSuccess} />
       )) : project && (
-        <ReviewControls key={project._id} onSuccess={onSuccess} projectId={project._id} page={page} disabled={disabled || loading || signedOut} />
+        <ReviewControls key={project._id + ":" + reviewId} initialReviewId={reviewId} onSuccess={onSuccess} projectId={project._id} page={page} disabled={disabled || loading || signedOut} />
       )}
     </section>
   )

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createReview, getReview, listReviews } from "../services/reviews"
 import { githubLoginUrl } from "../services/github"
+import { openPage } from "../navigation"
 import PanelDivider from "./PanelDivider"
 import ReviewFindings from "./ReviewFindings"
 import ReviewImprovements from "./ReviewImprovements"
@@ -49,10 +50,10 @@ function ReportMetadata({ report }) {
   )
 }
 
-function ReviewControls({ projectId, page, disabled, onSuccess }) {
+function ReviewControls({ projectId, page, disabled, onSuccess, initialReviewId = "" }) {
   const [suggestionsShare, setSuggestionsShare] = useState(50)
   const [expandedReviewId, setExpandedReviewId] = useState(null)
-  const [reportId, setReportId] = useState("")
+  const [reportId, setReportId] = useState(initialReviewId)
   const [reviews, setReviews] = useState([])
   const [nextCursor, setNextCursor] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -80,6 +81,10 @@ function ReviewControls({ projectId, page, disabled, onSuccess }) {
 
     try {
       const data = await listReviews(projectId, cursor, signal)
+      if (!cursor && initialReviewId && !data.reviews.some(review => review._id === initialReviewId)) {
+        const { review } = await getReview(initialReviewId, signal)
+        if (review.project === projectId) data.reviews.push(review)
+      }
 
       if (signal.aborted) {
         return
@@ -121,7 +126,7 @@ function ReviewControls({ projectId, page, disabled, onSuccess }) {
         setLoading(false)
       }
     }
-  }, [projectId])
+  }, [projectId, initialReviewId])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -320,7 +325,7 @@ function ReviewControls({ projectId, page, disabled, onSuccess }) {
                       <ReviewFindings reviewId={item._id} compared={item.mode === "latest-changes"} />
                     </div>
                   )}
-                  <a href={'#/projects/' + projectId + '/dashboard'} onClick={() => setReportId(item._id)}>Open report →</a>
+                  <a href="/" onClick={event => openPage(projectId, "dashboard", item._id, event)}>Open report →</a>
                 </details>
               </li>
             ))}

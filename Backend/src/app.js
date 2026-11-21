@@ -39,6 +39,10 @@ app.get("/api/health", (req, res) => {
 
 app.use(express.static(path.join(__dirname, "../public")))
 
+app.get(["/findings", "/coding", "/solutions", "/checks", "/history"], (req, res) => {
+  res.sendFile(path.join(__dirname, "../public/index.html"))
+})
+
 app.use((req, res) => {
   res.status(404).json({
     message: "Route not found"
